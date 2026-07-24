@@ -1,0 +1,31 @@
+/* Linear / Modern design tokens — Country Lion portals */
+:root {
+  --cl-bg-deep: #020203;
+  --cl-bg-base: #050506;
+  --cl-bg-elevated: #0a0a0c;
+  --cl-surface: rgba(255, 255, 255, 0.05);
+  --cl-surface-hover: rgba(255, 255, 255, 0.08);
+  --cl-foreground: #ededef;
+  --cl-foreground-muted: #8a8f98;
+  --cl-foreground-subtle: rgba(255, 255, 255, 0.6);
+  --cl-accent: #5e6ad2;
+  --cl-accent-bright: #6872d9;
+  --cl-accent-glow: rgba(94, 106, 210, 0.3);
+  --cl-border: rgba(255, 255, 255, 0.06);
+  --cl-border-hover: rgba(255, 255, 255, 0.1);
+  --cl-border-accent: rgba(94, 106, 210, 0.3);
+  --cl-input-bg: #0f0f12;
+  --cl-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --cl-shadow-card:
+    0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 2px 20px rgba(0, 0, 0, 0.4),
+    0 0 40px rgba(0, 0, 0, 0.2);
+  --cl-shadow-card-hover:
+    0 0 0 1px rgba(255, 255, 255, 0.1),
+    0 8px 40px rgba(0, 0, 0, 0.5),
+    0 0 80px rgba(94, 106, 210, 0.1);
+  --cl-shadow-accent:
+    0 0 0 1px rgba(94, 106, 210, 0.5),
+    0 4px 12px rgba(94, 106, 210, 0.3),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.2);
+}

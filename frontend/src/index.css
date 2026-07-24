@@ -1,0 +1,80 @@
+@import './styles/tokens.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    @apply antialiased;
+  }
+
+  body {
+    @apply antialiased font-sans m-0;
+    background-color: var(--cl-bg-base);
+    color: var(--cl-foreground);
+  }
+
+  *:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--cl-bg-base), 0 0 0 4px rgba(94, 106, 210, 0.5);
+  }
+}
+
+@layer components {
+  .cl-card {
+    background: linear-gradient(to bottom, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02));
+    border: 1px solid var(--cl-border);
+    border-radius: 1rem;
+    box-shadow: var(--cl-shadow-card);
+  }
+
+  .cl-btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50;
+    background: var(--cl-accent);
+    box-shadow: var(--cl-shadow-accent);
+    transition: background 200ms var(--cl-ease-out), transform 200ms var(--cl-ease-out);
+  }
+
+  .cl-btn-primary:hover:not(:disabled) {
+    background: var(--cl-accent-bright);
+  }
+
+  .cl-btn-primary:active:not(:disabled) {
+    transform: scale(0.98);
+  }
+
+  .cl-btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm border border-cl-border text-cl-fg hover:bg-white/[0.04];
+  }
+
+  .cl-input {
+    @apply w-full rounded-lg px-3 py-2 text-sm;
+    color: var(--cl-foreground);
+    background: var(--cl-input-bg);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  .cl-input:focus {
+    outline: none;
+    border-color: var(--cl-accent);
+    box-shadow: 0 0 0 3px var(--cl-accent-glow);
+  }
+
+  .cl-header {
+    @apply sticky top-0 z-30 border-b border-cl-border;
+    background: rgba(10, 10, 12, 0.85);
+    backdrop-filter: blur(16px) saturate(140%);
+  }
+
+  .cl-badge {
+    @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium border;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .motion-safe\:animate-cl-float,
+  .motion-safe\:animate-cl-float-delayed {
+    animation: none !important;
+  }
+}
