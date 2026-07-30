@@ -74,11 +74,15 @@ export default function CoursesPage() {
       <div>
         <h2 className="text-xl font-semibold text-cl-fg">Course catalogue</h2>
         <p className="text-sm text-cl-muted mt-1">
-          Define courses once. Assessment and CPC completions map into these records.
+          Add courses here so trainers can pick them when logging classroom sessions.
+          Assessment and CPC completions also map into these records.
         </p>
       </div>
 
       <form onSubmit={onSubmit} className="cl-card p-5 grid md:grid-cols-2 gap-4">
+        <div className="md:col-span-2">
+          <h3 className="text-sm font-semibold text-cl-fg">Add a course</h3>
+        </div>
         <label className="text-sm space-y-1.5">
           <span className="text-cl-muted">Title</span>
           <input

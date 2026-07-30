@@ -3,6 +3,18 @@ import { Link } from 'react-router-dom';
 import { fetchTrainingMatrix } from '../lib/api';
 import { formatDate, formatStatus, statusTone } from '../lib/training';
 
+const TABLE_COLUMNS = [
+  'Employee',
+  'Department',
+  'Course',
+  'Type',
+  'Valid (months)',
+  'Completed',
+  'Due',
+  'Status',
+  'Source',
+];
+
 export default function MatrixPage() {
   const [rows, setRows] = useState([]);
   const [departments, setDepartments] = useState([]);
@@ -14,6 +26,7 @@ export default function MatrixPage() {
   const [status, setStatus] = useState('');
   const [courseType, setCourseType] = useState('');
   const [loading, setLoading] = useState(true);
+  const [pdfBusy, setPdfBusy] = useState('');
   const [error, setError] = useState('');
 
   const load = async (params = {}) => {
@@ -55,6 +68,94 @@ export default function MatrixPage() {
     }
   };
 
+  const buildMatrixPdf = async () => {
+    const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
+      import('jspdf'),
+      import('jspdf-autotable'),
+    ]);
+
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
+    const exportedAt = new Date();
+    const activeFilters = [
+      q && `Search: ${q}`,
+      department && `Department: ${department}`,
+      course && `Course: ${course}`,
+      status && `Status: ${formatStatus(status)}`,
+      courseType && `Type: ${courseType}`,
+    ].filter(Boolean);
+
+    doc.setFontSize(16);
+    doc.text('Training matrix', 40, 40);
+    doc.setFontSize(10);
+    doc.setTextColor(90, 96, 110);
+    doc.text(`Exported ${exportedAt.toLocaleString('en-GB')}`, 40, 58);
+    doc.text(`Rows: ${rows.length}`, 40, 74);
+    if (activeFilters.length) {
+      doc.text(`Filters: ${activeFilters.join(' | ')}`, 40, 90, { maxWidth: 740 });
+    }
+
+    autoTable(doc, {
+      startY: activeFilters.length ? 108 : 92,
+      head: [TABLE_COLUMNS],
+      body: rows.map((row) => [
+        row.employeeName || '-',
+        row.department || '-',
+        row.courseName || '-',
+        row.courseType || '-',
+        row.validityMonths == null ? '-' : String(row.validityMonths),
+        formatDate(row.completedAt),
+        formatDate(row.dueDate),
+        formatStatus(row.status),
+        row.source || '-',
+      ]),
+      styles: {
+        fontSize: 8,
+        cellPadding: 5,
+        overflow: 'linebreak',
+        lineColor: [223, 229, 239],
+        lineWidth: 0.5,
+      },
+      headStyles: {
+        fillColor: [31, 41, 55],
+        textColor: [255, 255, 255],
+        fontStyle: 'bold',
+      },
+      alternateRowStyles: {
+        fillColor: [248, 250, 252],
+      },
+      margin: { left: 24, right: 24, bottom: 24 },
+    });
+
+    return { doc, exportedAt };
+  };
+
+  const runPdfAction = async (action) => {
+    if (!rows.length || pdfBusy) return;
+
+    setPdfBusy(action);
+    setError('');
+
+    try {
+      const { doc, exportedAt } = await buildMatrixPdf();
+
+      if (action === 'print') {
+        doc.autoPrint();
+        const blobUrl = doc.output('bloburl');
+        const printWindow = window.open(blobUrl, '_blank');
+        if (!printWindow) {
+          throw new Error('Pop-up blocked. Allow pop-ups for this site to print the PDF.');
+        }
+      } else {
+        const fileDate = exportedAt.toISOString().slice(0, 10);
+        doc.save(`training-matrix-${fileDate}.pdf`);
+      }
+    } catch (err) {
+      setError(err.message || (action === 'print' ? 'Failed to print PDF.' : 'Failed to export PDF.'));
+    } finally {
+      setPdfBusy('');
+    }
+  };
+
   return (
     <div className="space-y-6 max-w-none">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -64,9 +165,27 @@ export default function MatrixPage() {
             Flat view of all training records — same shape as the old SharePoint list.
           </p>
         </div>
-        <Link to="/employees" className="cl-btn-ghost">
-          Employee directory
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            className="cl-btn-ghost"
+            onClick={() => runPdfAction('export')}
+            disabled={loading || Boolean(pdfBusy) || !rows.length}
+          >
+            {pdfBusy === 'export' ? 'Exporting PDF…' : 'Export PDF'}
+          </button>
+          <button
+            type="button"
+            className="cl-btn-ghost"
+            onClick={() => runPdfAction('print')}
+            disabled={loading || Boolean(pdfBusy) || !rows.length}
+          >
+            {pdfBusy === 'print' ? 'Preparing print…' : 'Print PDF'}
+          </button>
+          <Link to="/employees" className="cl-btn-ghost">
+            Employee directory
+          </Link>
+        </div>
       </div>
 
       {totals && (
@@ -155,12 +274,13 @@ export default function MatrixPage() {
                 <th className="px-3 py-3 font-medium">Due</th>
                 <th className="px-3 py-3 font-medium">Status</th>
                 <th className="px-3 py-3 font-medium">Source</th>
+                <th className="px-3 py-3 font-medium">Action</th>
               </tr>
             </thead>
             <tbody>
               {!rows.length && !loading ? (
                 <tr>
-                  <td colSpan={9} className="px-4 py-8 text-center text-cl-muted">
+                  <td colSpan={10} className="px-4 py-8 text-center text-cl-muted">
                     No training rows found.
                   </td>
                 </tr>
@@ -193,6 +313,21 @@ export default function MatrixPage() {
                       </span>
                     </td>
                     <td className="px-3 py-2.5 text-cl-muted capitalize whitespace-nowrap">{row.source || '—'}</td>
+                    <td className="px-3 py-2.5 whitespace-nowrap">
+                      {row.conductAssessmentUrl ? (
+                        <a href={row.conductAssessmentUrl} className="cl-btn-primary inline-flex text-xs px-3 py-1.5">
+                          Conduct assessment
+                        </a>
+                      ) : row.assessmentUrl ? (
+                        <a href={row.assessmentUrl} className="cl-btn-primary inline-flex text-xs px-3 py-1.5">
+                          Take assessment
+                        </a>
+                      ) : row.trainerLed ? (
+                        <span className="text-xs text-cl-muted">Trainer-led</span>
+                      ) : (
+                        <span className="text-cl-muted">—</span>
+                      )}
+                    </td>
                   </tr>
                 ))
               )}

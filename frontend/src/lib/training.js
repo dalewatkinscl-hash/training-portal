@@ -30,6 +30,7 @@ export function formatStatus(status) {
   if (status === 'completed') return 'Valid';
   if (status === 'expired') return 'Expired';
   if (status === 'assigned') return 'Required';
+  if (status === 'failed') return 'Failed';
   return status || '—';
 }
 
@@ -38,5 +39,6 @@ export function statusTone(status) {
   if (status === 'expiring_soon') return 'border-amber-500/40 bg-amber-500/10 text-amber-200';
   if (status === 'expired') return 'border-rose-500/40 bg-rose-500/10 text-rose-300';
   if (status === 'assigned') return 'border-sky-500/40 bg-sky-500/10 text-sky-200';
+  if (status === 'failed') return 'border-red-600/50 bg-red-600/15 text-red-400';
   return 'border-cl-border bg-white/5 text-cl-muted';
 }

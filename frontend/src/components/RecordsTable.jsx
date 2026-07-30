@@ -7,7 +7,7 @@ export default function RecordsTable({ completions, emptyLabel = 'No training re
     );
   }
 
-  const showAction = completions.some((item) => item.assessmentUrl);
+  const showAction = completions.some((item) => item.assessmentUrl || item.conductAssessmentUrl || item.trainerLed);
 
   return (
     <div className="cl-card overflow-hidden">
@@ -60,13 +60,22 @@ export default function RecordsTable({ completions, emptyLabel = 'No training re
                 </td>
                 {showAction && (
                   <td className="px-4 py-3 whitespace-nowrap">
-                    {item.assessmentUrl ? (
+                    {item.conductAssessmentUrl ? (
+                      <a
+                        href={item.conductAssessmentUrl}
+                        className="cl-btn-primary inline-flex text-xs px-3 py-1.5"
+                      >
+                        Conduct assessment
+                      </a>
+                    ) : item.assessmentUrl ? (
                       <a
                         href={item.assessmentUrl}
                         className="cl-btn-primary inline-flex text-xs px-3 py-1.5"
                       >
                         Take assessment
                       </a>
+                    ) : item.trainerLed ? (
+                      <span className="text-xs text-cl-muted">Trainer-led</span>
                     ) : (
                       <span className="text-cl-muted">—</span>
                     )}

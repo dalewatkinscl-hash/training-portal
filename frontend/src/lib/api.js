@@ -43,6 +43,10 @@ export function createCompletion(body) {
   return api('/api/completions', { method: 'POST', body: JSON.stringify(body) });
 }
 
+export function createCompletionsBatch(body) {
+  return api('/api/completions/batch', { method: 'POST', body: JSON.stringify(body) });
+}
+
 export function updateCompletion(id, body) {
   return api(`/api/completions/${encodeURIComponent(id)}`, {
     method: 'PATCH',

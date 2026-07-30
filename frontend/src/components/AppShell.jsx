@@ -60,10 +60,10 @@ export default function AppShell({ portalUser, role, onLogout, children }) {
                 Matrix
               </NavLink>
               <NavLink to="/courses" className={linkClass}>
-                Courses
+                Catalogue
               </NavLink>
               <NavLink to="/log" className={linkClass}>
-                Log completion
+                Log course
               </NavLink>
               <NavLink to="/required" className={linkClass}>
                 Required

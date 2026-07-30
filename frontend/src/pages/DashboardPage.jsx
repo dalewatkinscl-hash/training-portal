@@ -42,7 +42,7 @@ export default function DashboardPage() {
         {[
           ['Active courses', data.coursesActive],
           ['Completions', data.completionsTotal],
-          ['Expiring (60d)', data.expiringSoon],
+          ['Expiring (30d)', data.expiringSoon],
           ['Expired', data.expired],
         ].map(([label, value]) => (
           <div key={label} className="cl-card p-4">

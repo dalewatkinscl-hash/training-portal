@@ -53,7 +53,7 @@ export default function EmployeeDetailPage() {
           to={`/log?employeeUid=${encodeURIComponent(employee.employeeUid || uid)}&employeeName=${encodeURIComponent(employee.employeeName || '')}&employeeEmail=${encodeURIComponent(employee.employeeEmail || '')}`}
           className="cl-btn-primary"
         >
-          Log completion
+          Log course
         </Link>
       </div>
 
@@ -61,7 +61,7 @@ export default function EmployeeDetailPage() {
         {[
           ['Total', summary.total],
           ['Valid', summary.valid],
-          ['Expiring (60d)', summary.expiringSoon],
+          ['Expiring (30d)', summary.expiringSoon],
           ['Expired', summary.expired],
         ].map(([label, value]) => (
           <div key={label} className="cl-card p-4">

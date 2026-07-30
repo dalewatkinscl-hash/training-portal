@@ -248,7 +248,7 @@ function serializeCourse(doc) {
   };
 }
 
-const EXPIRING_SOON_MS = 60 * 24 * 60 * 60 * 1000;
+const EXPIRING_SOON_MS = 30 * 24 * 60 * 60 * 1000;
 
 function computeExpiry(completedAt, validityMonths) {
   if (!completedAt || !validityMonths || validityMonths <= 0) return null;
@@ -374,24 +374,41 @@ async function loadAssessmentCourseMap(quizId) {
 }
 
 async function loadAssessmentLinksByCourseId() {
+  let quizMetaById = new Map();
+  try {
+    const quizzes = await fetchAssessmentQuizzes();
+    quizzes.forEach((quiz) => {
+      quizMetaById.set(String(quiz.id), quiz);
+    });
+  } catch (error) {
+    console.error('assessment quiz metadata fetch failed', error);
+  }
+
   const mapsSnap = await db.collection('assessment_course_maps').get();
   const byCourseId = new Map();
   const byCourseTitle = new Map();
+  const baseUrl = getAssessmentPortalUrl().replace(/\/$/, '');
   mapsSnap.docs.forEach((doc) => {
     const data = doc.data() || {};
     const courseId = String(data.courseId || '').trim();
     const quizId = String(data.quizId || doc.id || '').trim();
     if (!quizId) return;
+    const meta = quizMetaById.get(quizId) || {};
+    const trainerLed = meta.trainerLed === true || data.trainerLed === true;
     const link = {
       assessmentQuizId: quizId,
-      assessmentQuizTitle: data.quizTitle || '',
+      assessmentQuizTitle: data.quizTitle || meta.title || '',
       assessmentCourseTitle: data.courseTitle || '',
-      assessmentUrl: `${getAssessmentPortalUrl().replace(/\/$/, '')}/?quiz=${encodeURIComponent(quizId)}`,
+      trainerLed,
+      assessmentUrl: trainerLed ? null : `${baseUrl}/?quiz=${encodeURIComponent(quizId)}`,
+      conductAssessmentUrl: trainerLed
+        ? `${baseUrl}/?quiz=${encodeURIComponent(quizId)}&conduct=1`
+        : null,
     };
     if (courseId) byCourseId.set(courseId, link);
     const titleKey = normalizeName(data.courseTitle || '');
     if (titleKey) byCourseTitle.set(titleKey, link);
-    const quizTitleKey = normalizeName(data.quizTitle || '');
+    const quizTitleKey = normalizeName(data.quizTitle || meta.title || '');
     if (quizTitleKey) byCourseTitle.set(quizTitleKey, link);
   });
   return { byCourseId, byCourseTitle };
@@ -416,12 +433,37 @@ function resolveAssessmentLinkForCompletion(item, links) {
   return null;
 }
 
-function withAssessmentLinks(completions, links) {
+function withAssessmentLinks(completions, links, options = {}) {
+  const { forTrainer = false, employeeUid = '' } = options;
   return (completions || []).map((item) => {
-    const actionable = item.status === 'expired' || item.status === 'expiring_soon';
+    const actionable = item.status === 'assigned'
+      || item.status === 'expired'
+      || item.status === 'expiring_soon'
+      || item.status === 'failed';
     if (!actionable) return item;
     const link = resolveAssessmentLinkForCompletion(item, links);
     if (!link) return item;
+
+    if (link.trainerLed) {
+      const subjectUid = employeeUid || item.employeeUid || '';
+      if (forTrainer && link.conductAssessmentUrl && subjectUid) {
+        return {
+          ...item,
+          ...link,
+          assessmentUrl: null,
+          conductAssessmentUrl: `${link.conductAssessmentUrl}&employee=${encodeURIComponent(subjectUid)}`,
+        };
+      }
+      return {
+        ...item,
+        trainerLed: true,
+        assessmentQuizId: link.assessmentQuizId,
+        assessmentQuizTitle: link.assessmentQuizTitle,
+        assessmentUrl: null,
+        conductAssessmentUrl: null,
+      };
+    }
+
     return {
       ...item,
       ...link,
@@ -636,11 +678,12 @@ async function upsertCompletionRecord(payload, actor = {}) {
     throw Object.assign(new Error('Invalid expiresAt.'), { status: 400 });
   }
 
-  const status = computeStatus(expiryDate, completedDate);
+  const assessmentPassed = payload.passed;
+  const status = assessmentPassed === false ? 'failed' : computeStatus(expiryDate, completedDate);
   let existing = await findExistingIngest(source, sourceExternalId);
 
-  // Assessment / mapped courses: update the employee's existing course row (any source).
-  if (!existing && resolvedCourseId && (source === 'assessment' || source === 'cpc')) {
+  // Assessment / CPC / manual classroom logs: update the employee's existing course row.
+  if (!existing && resolvedCourseId && (source === 'assessment' || source === 'cpc' || source === 'manual')) {
     existing = await findExistingCompletionForCourse(employeeUid, resolvedCourseId);
   }
 
@@ -659,7 +702,7 @@ async function upsertCompletionRecord(payload, actor = {}) {
     courseTitle: resolvedTitle,
     status,
     completedAt: Timestamp.fromDate(completedDate),
-    expiresAt: expiryDate ? Timestamp.fromDate(expiryDate) : null,
+    expiresAt: status === 'failed' ? null : (expiryDate ? Timestamp.fromDate(expiryDate) : null),
     source,
     sourceExternalId: sourceExternalId || '',
     score,
@@ -1023,12 +1066,14 @@ app.get('/api/me/records', async (req, res) => {
   const completions = withAssessmentLinks(
     snap.docs.map(serializeCompletion),
     links,
+    { forTrainer: canTrain(auth.role), employeeUid: auth.user.uid },
   );
   const summary = {
     total: completions.length,
     valid: completions.filter((item) => item.status === 'completed').length,
     expired: completions.filter((item) => item.status === 'expired').length,
     expiringSoon: completions.filter((item) => item.status === 'expiring_soon').length,
+    failed: completions.filter((item) => item.status === 'failed').length,
     renewViaAssessment: completions.filter((item) => item.assessmentUrl).length,
   };
 
@@ -1062,6 +1107,132 @@ app.post('/api/completions', async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(error.status || 500).json({ error: error.message || 'Failed to save completion.' });
+  }
+});
+
+/**
+ * Trainer: log one course for many people (classroom session).
+ * Body: { courseId, completedAt, notes?, createCertificate?, employeeUids: string[] }
+ *        or { ..., employees: [{ employeeUid, employeeName?, employeeEmail? }] }
+ */
+app.post('/api/completions/batch', async (req, res) => {
+  const auth = await requireUser(req, res, 'trainer');
+  if (!auth) return;
+
+  try {
+    const body = req.body || {};
+    const courseId = String(body.courseId || '').trim();
+    const completedAt = body.completedAt;
+    const notes = body.notes || '';
+    const createCertificate = body.createCertificate !== false;
+    const source = body.source || 'manual';
+
+    if (!courseId) {
+      res.status(400).json({ error: 'courseId is required.' });
+      return;
+    }
+
+    let people = [];
+    if (Array.isArray(body.employees) && body.employees.length) {
+      people = body.employees
+        .map((person) => ({
+          employeeUid: String(person?.employeeUid || '').trim(),
+          employeeName: String(person?.employeeName || '').trim(),
+          employeeEmail: String(person?.employeeEmail || '').trim(),
+        }))
+        .filter((person) => person.employeeUid);
+    } else if (Array.isArray(body.employeeUids)) {
+      people = body.employeeUids
+        .map((uid) => ({ employeeUid: String(uid || '').trim() }))
+        .filter((person) => person.employeeUid);
+    }
+
+    // De-dupe by uid while preserving order.
+    const seen = new Set();
+    people = people.filter((person) => {
+      if (seen.has(person.employeeUid)) return false;
+      seen.add(person.employeeUid);
+      return true;
+    });
+
+    if (!people.length) {
+      res.status(400).json({ error: 'Select at least one employee.' });
+      return;
+    }
+    if (people.length > 150) {
+      res.status(400).json({ error: 'Batch limited to 150 people at a time.' });
+      return;
+    }
+
+    const course = await loadCourse(courseId);
+    if (!course) {
+      res.status(404).json({ error: 'Course not found.' });
+      return;
+    }
+
+    const results = [];
+    let created = 0;
+    let updated = 0;
+    let failed = 0;
+
+    for (const person of people) {
+      try {
+        const result = await upsertCompletionRecord(
+          {
+            employeeUid: person.employeeUid,
+            employeeName: person.employeeName,
+            employeeEmail: person.employeeEmail,
+            courseId: course.id,
+            courseTitle: course.title,
+            courseCode: course.code,
+            completedAt,
+            notes,
+            createCertificate,
+            source,
+          },
+          auth.user,
+        );
+        if (result.isNew) created += 1;
+        else updated += 1;
+        results.push({
+          employeeUid: person.employeeUid,
+          employeeName: result.completion?.employeeName || person.employeeName || '',
+          ok: true,
+          isNew: result.isNew,
+          completionId: result.completion?.id || '',
+          sharePointWebUrl: result.completion?.sharePointWebUrl || '',
+          certificatePendingSharePoint: !!result.completion?.certificatePendingSharePoint,
+        });
+      } catch (error) {
+        failed += 1;
+        console.error('batch completion failed', person.employeeUid, error);
+        results.push({
+          employeeUid: person.employeeUid,
+          employeeName: person.employeeName || '',
+          ok: false,
+          error: error.message || 'Failed to save completion.',
+        });
+      }
+    }
+
+    res.status(failed && failed === people.length ? 500 : 200).json({
+      course: {
+        id: course.id,
+        title: course.title,
+        code: course.code,
+      },
+      totals: {
+        requested: people.length,
+        created,
+        updated,
+        failed,
+        certificates: results.filter((row) => row.ok).length,
+      },
+      results,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(error.status || 500).json({ error: error.message || 'Failed to save batch completions.' });
   }
 });
 
@@ -1134,7 +1305,7 @@ app.patch('/api/completions/:id', async (req, res) => {
 });
 
 /**
- * Trainer+: required training log — expired + due within 60 days,
+ * Trainer+: required training log — expired + due within 30 days,
  * sorted most overdue first (expiresAt ascending).
  */
 app.get('/api/required-training', async (req, res) => {
@@ -1164,6 +1335,7 @@ app.get('/api/required-training', async (req, res) => {
         department: profile.department || '',
       };
     }).filter((item) => {
+      if (item.status === 'failed') return true;
       if (!item.expiresAt) return false;
       const expires = new Date(item.expiresAt).getTime();
       if (!Number.isFinite(expires)) return false;
@@ -1187,6 +1359,9 @@ app.get('/api/required-training', async (req, res) => {
       return String(a.employeeName || '').localeCompare(String(b.employeeName || ''));
     });
 
+    const links = await loadAssessmentLinksByCourseId();
+    rows = withAssessmentLinks(rows, links, { forTrainer: true });
+
     const departments = [...new Set(
       [...profilesByUid.values()].map((row) => row.department).filter(Boolean),
     )].sort((a, b) => a.localeCompare(b));
@@ -1198,6 +1373,7 @@ app.get('/api/required-training', async (req, res) => {
         total: rows.length,
         expired: rows.filter((row) => row.status === 'expired').length,
         expiringSoon: rows.filter((row) => row.status === 'expiring_soon').length,
+        failed: rows.filter((row) => row.status === 'failed').length,
       },
     });
   } catch (error) {
@@ -1294,6 +1470,7 @@ app.get('/api/dashboard', async (req, res) => {
     completionsTotal: completions.length,
     expired: completions.filter((item) => item.status === 'expired').length,
     expiringSoon: completions.filter((item) => item.status === 'expiring_soon').length,
+    failed: completions.filter((item) => item.status === 'failed').length,
     employeesWithRecords: new Set(completions.map((item) => item.employeeUid).filter(Boolean)).size,
     recent: completions.slice(0, 12),
   });
@@ -1306,6 +1483,7 @@ function summarizeEmployeeCompletions(completions) {
     expired: completions.filter((item) => item.status === 'expired').length,
     assigned: completions.filter((item) => item.status === 'assigned').length,
     expiringSoon: completions.filter((item) => item.status === 'expiring_soon').length,
+    failed: completions.filter((item) => item.status === 'failed').length,
   };
 }
 
@@ -1435,9 +1613,13 @@ app.get('/api/employees/:uid', async (req, res) => {
       db.collection('completions').where('employeeUid', '==', uid).get(),
     ]);
 
-    const completions = completionsSnap.docs
-      .map(serializeCompletion)
-      .sort((a, b) => String(b.completedAt || b.expiresAt || '').localeCompare(String(a.completedAt || a.expiresAt || '')));
+    const completions = withAssessmentLinks(
+      completionsSnap.docs
+        .map(serializeCompletion)
+        .sort((a, b) => String(b.completedAt || b.expiresAt || '').localeCompare(String(a.completedAt || a.expiresAt || ''))),
+      await loadAssessmentLinksByCourseId(),
+      { forTrainer: true, employeeUid: uid },
+    );
 
     if (!profile && !completions.length) {
       res.status(404).json({ error: 'Employee not found.' });
@@ -1518,6 +1700,17 @@ app.get('/api/matrix', async (req, res) => {
       };
     });
 
+    const links = await loadAssessmentLinksByCourseId();
+    rows = withAssessmentLinks(
+      rows.map((row) => ({
+        ...row,
+        courseTitle: row.courseName,
+        expiresAt: row.dueDate,
+      })),
+      links,
+      { forTrainer: true },
+    );
+
     if (q) {
       rows = rows.filter((row) => {
         const hay = `${row.employeeName} ${row.employeeEmail} ${row.courseName} ${row.department}`.toLowerCase();
@@ -1559,6 +1752,7 @@ app.get('/api/matrix', async (req, res) => {
         employees: new Set(rows.map((row) => row.employeeUid).filter(Boolean)).size,
         expired: rows.filter((row) => row.status === 'expired').length,
         expiringSoon: rows.filter((row) => row.status === 'expiring_soon').length,
+        failed: rows.filter((row) => row.status === 'failed').length,
         valid: rows.filter((row) => row.status === 'completed').length,
         assigned: rows.filter((row) => row.status === 'assigned').length,
       },
@@ -1794,6 +1988,7 @@ app.put('/api/admin/assessment-maps', async (req, res) => {
       quizTitle: quizTitle || '',
       courseId: course.id,
       courseTitle: course.title || '',
+      trainerLed: req.body?.trainerLed === true,
       updatedAt: FieldValue.serverTimestamp(),
       updatedByUid: auth.user.uid,
     }, { merge: true });
@@ -1979,6 +2174,7 @@ app.post('/api/admin/assessment-maps/auto-map', async (req, res) => {
         quizTitle,
         courseId: best.id,
         courseTitle: best.title || '',
+        trainerLed: quiz.trainerLed === true,
         updatedAt: FieldValue.serverTimestamp(),
         updatedByUid: actorUid,
       }, { merge: true });

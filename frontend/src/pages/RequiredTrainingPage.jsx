@@ -70,7 +70,7 @@ export default function RequiredTrainingPage() {
       <div>
         <h2 className="text-xl font-semibold text-cl-fg">Required training</h2>
         <p className="text-sm text-cl-muted mt-1">
-          Expired training first (most overdue at the top), then everything due in the next 60 days.
+          Expired training first (most overdue at the top), then everything due in the next 30 days.
         </p>
       </div>
 
@@ -80,6 +80,7 @@ export default function RequiredTrainingPage() {
             ['Total', totals.total],
             ['Expired', totals.expired],
             ['Expiring soon', totals.expiringSoon],
+            ['Failed', totals.failed],
           ].map(([label, value]) => (
             <div key={label} className="cl-card p-4">
               <div className="text-xs uppercase tracking-wider text-cl-muted mb-2">{label}</div>
@@ -178,7 +179,15 @@ export default function RequiredTrainingPage() {
                         <span className="text-cl-muted">—</span>
                       )}
                     </td>
-                    <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                    <td className="px-3 py-2.5 text-right whitespace-nowrap space-x-2">
+                      {item.conductAssessmentUrl && (
+                        <a
+                          href={item.conductAssessmentUrl}
+                          className="cl-btn-primary inline-flex text-xs px-3 py-1.5"
+                        >
+                          Conduct assessment
+                        </a>
+                      )}
                       <button
                         type="button"
                         className="cl-btn-ghost"
