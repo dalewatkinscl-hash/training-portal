@@ -22,8 +22,11 @@ export function fetchMyRecords() {
   return api('/api/me/records');
 }
 
-export function fetchCourses() {
-  return api('/api/courses');
+export function fetchCourses(params = {}) {
+  const query = new URLSearchParams(
+    Object.entries(params).filter(([, value]) => value != null && value !== ''),
+  ).toString();
+  return api(`/api/courses${query ? `?${query}` : ''}`);
 }
 
 export function createCourse(body) {
@@ -51,6 +54,12 @@ export function updateCompletion(id, body) {
   return api(`/api/completions/${encodeURIComponent(id)}`, {
     method: 'PATCH',
     body: JSON.stringify(body),
+  });
+}
+
+export function deleteCompletion(id) {
+  return api(`/api/completions/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
   });
 }
 

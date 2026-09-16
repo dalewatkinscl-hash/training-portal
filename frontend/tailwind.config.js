@@ -21,6 +21,7 @@ export default {
       },
       fontFamily: {
         sans: ['Inter', 'Geist Sans', 'system-ui', 'sans-serif'],
+        clock: ['"Share Tech Mono"', 'ui-monospace', 'monospace'],
       },
       transitionTimingFunction: {
         'cl-out': 'cubic-bezier(0.16, 1, 0.3, 1)',

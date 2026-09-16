@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { fetchEmployees } from '../lib/api';
 import { statusTone } from '../lib/training';
+import { useI18n } from '../i18n/LanguageProvider';
 
 function overallTone(status) {
   if (status === 'valid') return statusTone('completed');
@@ -12,6 +13,7 @@ function overallTone(status) {
 }
 
 export default function EmployeesPage() {
+  const { t, formatStatus } = useI18n();
   const [employees, setEmployees] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [totals, setTotals] = useState(null);
@@ -63,22 +65,22 @@ export default function EmployeesPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 className="text-xl font-semibold text-cl-fg">Employees</h2>
+          <h2 className="text-xl font-semibold text-cl-fg">{t('employees.title')}</h2>
           <p className="text-sm text-cl-muted mt-1">
-            Browse everyone with training records. Open a person to see their full history.
+            {t('employees.subtitle')}
           </p>
         </div>
         <Link to="/matrix" className="cl-btn-ghost">
-          Open matrix view
+          {t('employees.openMatrix')}
         </Link>
       </div>
 
       {totals && (
         <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
           {[
-            ['Employees', totals.employees],
-            ['With expired', totals.withExpired],
-            ['Expiring soon', totals.withExpiring],
+            [t('employees.count'), totals.employees],
+            [t('employees.withExpired'), totals.withExpired],
+            [t('stats.expiringSoon'), totals.withExpiring],
           ].map(([label, value]) => (
             <div key={label} className="cl-card p-4">
               <div className="text-xs uppercase tracking-wider text-cl-muted mb-2">{label}</div>
@@ -90,35 +92,35 @@ export default function EmployeesPage() {
 
       <form onSubmit={applyFilters} className="cl-card p-4 grid md:grid-cols-4 gap-3">
         <label className="text-sm space-y-1.5">
-          <span className="text-xs text-cl-muted">Search</span>
+          <span className="text-xs text-cl-muted">{t('common.search')}</span>
           <input
             className="cl-input w-full"
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Name, email, department…"
+            placeholder={t('employees.searchPlaceholder')}
           />
         </label>
         <label className="text-sm space-y-1.5">
-          <span className="text-xs text-cl-muted">Department</span>
+          <span className="text-xs text-cl-muted">{t('common.department')}</span>
           <select className="cl-input w-full" value={department} onChange={(e) => setDepartment(e.target.value)}>
-            <option value="">All</option>
+            <option value="">{t('common.all')}</option>
             {departments.map((name) => (
               <option key={name} value={name}>{name}</option>
             ))}
           </select>
         </label>
         <label className="text-sm space-y-1.5">
-          <span className="text-xs text-cl-muted">Status</span>
+          <span className="text-xs text-cl-muted">{t('common.status')}</span>
           <select className="cl-input w-full" value={status} onChange={(e) => setStatus(e.target.value)}>
-            <option value="">All</option>
-            <option value="valid">Valid</option>
-            <option value="expiring">Expiring soon</option>
-            <option value="expired">Has expired</option>
+            <option value="">{t('common.all')}</option>
+            <option value="valid">{t('status.valid')}</option>
+            <option value="expiring">{t('status.expiringSoon')}</option>
+            <option value="expired">{t('status.hasExpired')}</option>
           </select>
         </label>
         <div className="flex items-end">
           <button type="submit" className="cl-btn-primary w-full" disabled={loading}>
-            {loading ? 'Loading…' : 'Apply filters'}
+            {loading ? t('common.loading') : t('common.applyFilters')}
           </button>
         </div>
       </form>
@@ -130,20 +132,20 @@ export default function EmployeesPage() {
           <table className="min-w-full text-sm">
             <thead>
               <tr className="text-left text-xs uppercase tracking-wider text-cl-muted border-b border-cl-border">
-                <th className="px-4 py-3 font-medium">Employee</th>
-                <th className="px-4 py-3 font-medium">Department</th>
-                <th className="px-4 py-3 font-medium">Valid</th>
-                <th className="px-4 py-3 font-medium">Expiring</th>
-                <th className="px-4 py-3 font-medium">Expired</th>
-                <th className="px-4 py-3 font-medium">Required</th>
-                <th className="px-4 py-3 font-medium">Overall</th>
+                <th className="px-4 py-3 font-medium">{t('common.employee')}</th>
+                <th className="px-4 py-3 font-medium">{t('common.department')}</th>
+                <th className="px-4 py-3 font-medium">{t('status.valid')}</th>
+                <th className="px-4 py-3 font-medium">{t('employees.expiring')}</th>
+                <th className="px-4 py-3 font-medium">{t('employees.expired')}</th>
+                <th className="px-4 py-3 font-medium">{t('employees.required')}</th>
+                <th className="px-4 py-3 font-medium">{t('employees.overall')}</th>
               </tr>
             </thead>
             <tbody>
               {!employees.length && !loading ? (
                 <tr>
                   <td colSpan={7} className="px-4 py-8 text-center text-cl-muted">
-                    No employees found. Import the Training Matrix from Admin first.
+                    {t('employees.empty')}
                   </td>
                 </tr>
               ) : (
@@ -154,7 +156,7 @@ export default function EmployeesPage() {
                         to={`/employees/${encodeURIComponent(employee.employeeUid)}`}
                         className="font-medium text-cl-fg hover:text-cl-accent-bright"
                       >
-                        {employee.employeeName || 'Unknown'}
+                        {employee.employeeName || t('common.unknown')}
                       </Link>
                       <div className="text-xs text-cl-muted mt-0.5">{employee.employeeEmail || '—'}</div>
                     </td>
@@ -165,7 +167,7 @@ export default function EmployeesPage() {
                     <td className="px-4 py-3 text-cl-muted">{employee.summary?.assigned ?? 0}</td>
                     <td className="px-4 py-3">
                       <span className={`cl-badge ${overallTone(employee.overallStatus)}`}>
-                        {employee.overallStatus}
+                        {formatStatus(employee.overallStatus)}
                       </span>
                     </td>
                   </tr>

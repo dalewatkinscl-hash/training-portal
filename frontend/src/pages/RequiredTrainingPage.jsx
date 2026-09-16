@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { fetchRequiredTraining, reissueCertificate } from '../lib/api';
-import { formatDate, formatStatus, statusTone } from '../lib/training';
+import { statusTone } from '../lib/training';
+import { useI18n } from '../i18n/LanguageProvider';
 
 export default function RequiredTrainingPage() {
+  const { t, formatDate, formatStatus } = useI18n();
   const [rows, setRows] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [totals, setTotals] = useState(null);
@@ -68,19 +70,19 @@ export default function RequiredTrainingPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-semibold text-cl-fg">Required training</h2>
+        <h2 className="text-xl font-semibold text-cl-fg">{t('required.title')}</h2>
         <p className="text-sm text-cl-muted mt-1">
-          Expired training first (most overdue at the top), then everything due in the next 30 days.
+          {t('required.subtitle')}
         </p>
       </div>
 
       {totals && (
         <div className="grid grid-cols-3 gap-3 max-w-xl">
           {[
-            ['Total', totals.total],
-            ['Expired', totals.expired],
-            ['Expiring soon', totals.expiringSoon],
-            ['Failed', totals.failed],
+            [t('stats.total'), totals.total],
+            [t('stats.expired'), totals.expired],
+            [t('stats.expiringSoon'), totals.expiringSoon],
+            [t('stats.failed'), totals.failed],
           ].map(([label, value]) => (
             <div key={label} className="cl-card p-4">
               <div className="text-xs uppercase tracking-wider text-cl-muted mb-2">{label}</div>
@@ -92,18 +94,18 @@ export default function RequiredTrainingPage() {
 
       <form onSubmit={applyFilters} className="cl-card p-4 grid md:grid-cols-4 gap-3">
         <label className="text-sm space-y-1.5 md:col-span-2">
-          <span className="text-xs text-cl-muted">Search</span>
+          <span className="text-xs text-cl-muted">{t('common.search')}</span>
           <input
             className="cl-input w-full"
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Employee, course, email…"
+            placeholder={t('required.searchPlaceholder')}
           />
         </label>
         <label className="text-sm space-y-1.5">
-          <span className="text-xs text-cl-muted">Department</span>
+          <span className="text-xs text-cl-muted">{t('common.department')}</span>
           <select className="cl-input w-full" value={department} onChange={(e) => setDepartment(e.target.value)}>
-            <option value="">All</option>
+            <option value="">{t('common.all')}</option>
             {departments.map((name) => (
               <option key={name} value={name}>{name}</option>
             ))}
@@ -111,7 +113,7 @@ export default function RequiredTrainingPage() {
         </label>
         <div className="flex items-end">
           <button type="submit" className="cl-btn-primary" disabled={loading}>
-            {loading ? 'Loading…' : 'Apply'}
+            {loading ? t('common.loading') : t('common.apply')}
           </button>
         </div>
       </form>
@@ -123,25 +125,25 @@ export default function RequiredTrainingPage() {
           <table className="min-w-[1100px] w-full text-sm">
             <thead>
               <tr className="text-left text-xs uppercase tracking-wider text-cl-muted border-b border-cl-border">
-                <th className="px-3 py-3 font-medium">Due / expired</th>
-                <th className="px-3 py-3 font-medium">Employee</th>
-                <th className="px-3 py-3 font-medium">Department</th>
-                <th className="px-3 py-3 font-medium">Course</th>
-                <th className="px-3 py-3 font-medium">Completed</th>
-                <th className="px-3 py-3 font-medium">Status</th>
-                <th className="px-3 py-3 font-medium">Certificate</th>
+                <th className="px-3 py-3 font-medium">{t('required.dueExpired')}</th>
+                <th className="px-3 py-3 font-medium">{t('common.employee')}</th>
+                <th className="px-3 py-3 font-medium">{t('common.department')}</th>
+                <th className="px-3 py-3 font-medium">{t('common.course')}</th>
+                <th className="px-3 py-3 font-medium">{t('common.completed')}</th>
+                <th className="px-3 py-3 font-medium">{t('common.status')}</th>
+                <th className="px-3 py-3 font-medium">{t('common.certificate')}</th>
                 <th className="px-3 py-3 font-medium" />
               </tr>
             </thead>
             <tbody>
               {loading && !rows.length ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-cl-muted">Loading…</td>
+                  <td colSpan={8} className="px-4 py-8 text-center text-cl-muted">{t('common.loading')}</td>
                 </tr>
               ) : !rows.length ? (
                 <tr>
                   <td colSpan={8} className="px-4 py-8 text-center text-cl-muted">
-                    No expired or soon-due training found.
+                    {t('required.empty')}
                   </td>
                 </tr>
               ) : (
@@ -165,7 +167,15 @@ export default function RequiredTrainingPage() {
                       )}
                     </td>
                     <td className="px-3 py-2.5 text-cl-muted whitespace-nowrap">{item.department || '—'}</td>
-                    <td className="px-3 py-2.5 text-cl-fg">{item.courseTitle || '—'}</td>
+                    <td className="px-3 py-2.5 text-cl-fg">
+                      {item.courseTitle || '—'}
+                      {item.courseLevel > 1 && (
+                        <div className="text-xs text-cl-muted">{t('common.level', { level: item.courseLevel })}</div>
+                      )}
+                      {item.coveredByCourseTitle && (
+                        <div className="text-xs text-sky-300/90">{t('common.coveredBy', { title: item.coveredByCourseTitle })}</div>
+                      )}
+                    </td>
                     <td className="px-3 py-2.5 text-cl-muted whitespace-nowrap">{formatDate(item.completedAt)}</td>
                     <td className="px-3 py-2.5">
                       <span className={`cl-badge ${statusTone(item.status)}`}>{formatStatus(item.status)}</span>
@@ -173,7 +183,7 @@ export default function RequiredTrainingPage() {
                     <td className="px-3 py-2.5">
                       {item.sharePointWebUrl ? (
                         <a href={item.sharePointWebUrl} target="_blank" rel="noreferrer" className="text-cl-accent">
-                          Open
+                          {t('common.open')}
                         </a>
                       ) : (
                         <span className="text-cl-muted">—</span>
@@ -185,7 +195,7 @@ export default function RequiredTrainingPage() {
                           href={item.conductAssessmentUrl}
                           className="cl-btn-primary inline-flex text-xs px-3 py-1.5"
                         >
-                          Conduct assessment
+                          {t('action.conductAssessment')}
                         </a>
                       )}
                       <button
@@ -194,7 +204,7 @@ export default function RequiredTrainingPage() {
                         disabled={busyId === item.id}
                         onClick={() => onReissue(item.id)}
                       >
-                        {busyId === item.id ? 'Working…' : 'Reissue'}
+                        {busyId === item.id ? t('required.working') : t('required.reissue')}
                       </button>
                     </td>
                   </tr>

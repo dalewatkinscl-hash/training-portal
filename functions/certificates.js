@@ -136,6 +136,7 @@ function drawDivider(doc, y, pageWidth) {
 function buildTrainingCertificatePdf({
   employeeName,
   courseTitle,
+  courseLevel = 1,
   completedAt,
   expiresAt,
   certificateId,
@@ -147,7 +148,7 @@ function buildTrainingCertificatePdf({
       layout: 'landscape',
       margins: { top: 40, bottom: 40, left: 48, right: 48 },
       info: {
-        Title: `Training Certificate — ${courseTitle || 'Course'}`,
+        Title: `Training Certificate — ${courseTitle || 'Course'} (Level ${Number(courseLevel) === 2 || Number(courseLevel) === 3 ? Number(courseLevel) : 1})`,
         Author: 'Country Lion (Northampton) Limited',
         Subject: `Certificate for ${employeeName || 'employee'}`,
       },
@@ -234,7 +235,21 @@ function buildTrainingCertificatePdf({
         align: 'center',
       });
 
-    y += 42;
+    const level = Number(courseLevel) === 2 || Number(courseLevel) === 3
+      ? Number(courseLevel)
+      : 1;
+    y = doc.y + 8;
+    doc
+      .fillColor(COLOURS.goldDark)
+      .font('Helvetica')
+      .fontSize(12)
+      .text(`Level ${level}`, 80, y, {
+        width: pageWidth - 160,
+        align: 'center',
+        characterSpacing: 1.5,
+      });
+
+    y = doc.y + 18;
     drawDivider(doc, y, pageWidth);
 
     y += 22;

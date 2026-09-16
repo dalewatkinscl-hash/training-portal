@@ -67,14 +67,76 @@
     backdrop-filter: blur(16px) saturate(140%);
   }
 
+  .language-menu-button {
+    @apply inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-cl-border text-sm text-cl-fg hover:bg-white/[0.04];
+  }
+
+  .language-menu-list {
+    @apply fixed z-50 rounded-lg border border-white/20 p-1.5;
+    background: #16161c;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+  }
+
+  .language-menu-option {
+    @apply flex w-full items-center gap-2.5 rounded-md px-3 py-2.5 text-sm text-cl-fg;
+    min-height: 2.75rem;
+  }
+
+  .language-menu-option:hover,
+  .language-menu-option:focus-visible {
+    @apply bg-white/[0.08];
+  }
+
+  .language-menu-option.is-active {
+    color: #c7cbf5;
+    background: rgba(94, 106, 210, 0.28);
+  }
+
+  .language-flag {
+    width: 1.35rem;
+    height: 0.9rem;
+    border-radius: 2px;
+    display: block;
+    flex-shrink: 0;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18);
+  }
+
   .cl-badge {
     @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium border;
+  }
+
+  .digital-clock {
+    @apply flex flex-col items-center justify-center min-w-[9.5rem] px-4 py-1.5 rounded-xl;
+    background: rgba(94, 106, 210, 0.08);
+    border: 1px solid rgba(94, 106, 210, 0.28);
+    box-shadow: inset 0 0 18px rgba(94, 106, 210, 0.12);
+  }
+
+  .digital-clock-time {
+    @apply font-clock tabular-nums leading-none text-[1.65rem] tracking-[0.12em];
+    color: #c7cbf5;
+    text-shadow: 0 0 12px rgba(94, 106, 210, 0.55);
+  }
+
+  .digital-clock-sep {
+    animation: clockBlink 1s step-end infinite;
+  }
+
+  .digital-clock-date {
+    @apply mt-1 text-[10px] font-mono uppercase tracking-[0.16em] text-cl-muted;
+  }
+}
+
+@keyframes clockBlink {
+  50% {
+    opacity: 0.25;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .motion-safe\:animate-cl-float,
-  .motion-safe\:animate-cl-float-delayed {
+  .motion-safe\:animate-cl-float-delayed,
+  .digital-clock-sep {
     animation: none !important;
   }
 }

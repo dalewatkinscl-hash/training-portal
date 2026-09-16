@@ -1,21 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { fetchTrainingMatrix } from '../lib/api';
-import { formatDate, formatStatus, statusTone } from '../lib/training';
-
-const TABLE_COLUMNS = [
-  'Employee',
-  'Department',
-  'Course',
-  'Type',
-  'Valid (months)',
-  'Completed',
-  'Due',
-  'Status',
-  'Source',
-];
+import { statusTone } from '../lib/training';
+import { useI18n } from '../i18n/LanguageProvider';
 
 export default function MatrixPage() {
+  const { t, locale, formatDate, formatStatus, formatSource, formatCourseType } = useI18n();
   const [rows, setRows] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [courseNames, setCourseNames] = useState([]);
@@ -77,36 +67,48 @@ export default function MatrixPage() {
     const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
     const exportedAt = new Date();
     const activeFilters = [
-      q && `Search: ${q}`,
-      department && `Department: ${department}`,
-      course && `Course: ${course}`,
-      status && `Status: ${formatStatus(status)}`,
-      courseType && `Type: ${courseType}`,
+      q && t('matrix.pdfSearch', { q }),
+      department && t('matrix.pdfDepartment', { department }),
+      course && t('matrix.pdfCourse', { course }),
+      status && t('matrix.pdfStatus', { status: formatStatus(status) }),
+      courseType && t('matrix.pdfType', { type: formatCourseType(courseType) }),
     ].filter(Boolean);
 
     doc.setFontSize(16);
-    doc.text('Training matrix', 40, 40);
+    doc.text(t('matrix.title'), 40, 40);
     doc.setFontSize(10);
     doc.setTextColor(90, 96, 110);
-    doc.text(`Exported ${exportedAt.toLocaleString('en-GB')}`, 40, 58);
-    doc.text(`Rows: ${rows.length}`, 40, 74);
+    doc.text(t('matrix.pdfExported', { when: exportedAt.toLocaleString(locale) }), 40, 58);
+    doc.text(t('matrix.pdfRows', { count: rows.length }), 40, 74);
     if (activeFilters.length) {
-      doc.text(`Filters: ${activeFilters.join(' | ')}`, 40, 90, { maxWidth: 740 });
+      doc.text(t('matrix.pdfFilters', { filters: activeFilters.join(' | ') }), 40, 90, { maxWidth: 740 });
     }
 
     autoTable(doc, {
       startY: activeFilters.length ? 108 : 92,
-      head: [TABLE_COLUMNS],
+      head: [[
+        t('common.employee'),
+        t('common.department'),
+        t('common.course'),
+        t('common.type'),
+        t('matrix.validMonths'),
+        t('common.completed'),
+        t('common.due'),
+        t('common.status'),
+        t('common.source'),
+      ]],
       body: rows.map((row) => [
         row.employeeName || '-',
         row.department || '-',
-        row.courseName || '-',
-        row.courseType || '-',
+        row.coveredByCourseTitle
+          ? t('matrix.pdfCoveredBy', { course: row.courseName || '-', title: row.coveredByCourseTitle })
+          : (row.courseName || '-'),
+        formatCourseType(row.courseType),
         row.validityMonths == null ? '-' : String(row.validityMonths),
         formatDate(row.completedAt),
         formatDate(row.dueDate),
         formatStatus(row.status),
-        row.source || '-',
+        formatSource(row.source),
       ]),
       styles: {
         fontSize: 8,
@@ -143,7 +145,7 @@ export default function MatrixPage() {
         const blobUrl = doc.output('bloburl');
         const printWindow = window.open(blobUrl, '_blank');
         if (!printWindow) {
-          throw new Error('Pop-up blocked. Allow pop-ups for this site to print the PDF.');
+          throw new Error(t('matrix.popupBlocked'));
         }
       } else {
         const fileDate = exportedAt.toISOString().slice(0, 10);
@@ -160,9 +162,9 @@ export default function MatrixPage() {
     <div className="space-y-6 max-w-none">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 className="text-xl font-semibold text-cl-fg">Training matrix</h2>
+          <h2 className="text-xl font-semibold text-cl-fg">{t('matrix.title')}</h2>
           <p className="text-sm text-cl-muted mt-1">
-            Flat view of all training records — same shape as the old SharePoint list.
+            {t('matrix.subtitle')}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -172,7 +174,7 @@ export default function MatrixPage() {
             onClick={() => runPdfAction('export')}
             disabled={loading || Boolean(pdfBusy) || !rows.length}
           >
-            {pdfBusy === 'export' ? 'Exporting PDF…' : 'Export PDF'}
+            {pdfBusy === 'export' ? t('matrix.exportingPdf') : t('matrix.exportPdf')}
           </button>
           <button
             type="button"
@@ -180,10 +182,10 @@ export default function MatrixPage() {
             onClick={() => runPdfAction('print')}
             disabled={loading || Boolean(pdfBusy) || !rows.length}
           >
-            {pdfBusy === 'print' ? 'Preparing print…' : 'Print PDF'}
+            {pdfBusy === 'print' ? t('matrix.preparingPrint') : t('matrix.printPdf')}
           </button>
           <Link to="/employees" className="cl-btn-ghost">
-            Employee directory
+            {t('matrix.employeeDirectory')}
           </Link>
         </div>
       </div>
@@ -191,11 +193,11 @@ export default function MatrixPage() {
       {totals && (
         <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
           {[
-            ['Rows', totals.rows],
-            ['Employees', totals.employees],
-            ['Valid', totals.valid],
-            ['Expiring soon', totals.expiringSoon],
-            ['Expired', totals.expired],
+            [t('matrix.rows'), totals.rows],
+            [t('employees.count'), totals.employees],
+            [t('stats.valid'), totals.valid],
+            [t('stats.expiringSoon'), totals.expiringSoon],
+            [t('stats.expired'), totals.expired],
           ].map(([label, value]) => (
             <div key={label} className="cl-card p-4">
               <div className="text-xs uppercase tracking-wider text-cl-muted mb-2">{label}</div>
@@ -207,53 +209,53 @@ export default function MatrixPage() {
 
       <form onSubmit={applyFilters} className="cl-card p-4 grid md:grid-cols-3 xl:grid-cols-6 gap-3">
         <label className="text-sm space-y-1.5 xl:col-span-2">
-          <span className="text-xs text-cl-muted">Search</span>
+          <span className="text-xs text-cl-muted">{t('common.search')}</span>
           <input
             className="cl-input w-full"
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Employee or course…"
+            placeholder={t('matrix.searchPlaceholder')}
           />
         </label>
         <label className="text-sm space-y-1.5">
-          <span className="text-xs text-cl-muted">Department</span>
+          <span className="text-xs text-cl-muted">{t('common.department')}</span>
           <select className="cl-input w-full" value={department} onChange={(e) => setDepartment(e.target.value)}>
-            <option value="">All</option>
+            <option value="">{t('common.all')}</option>
             {departments.map((name) => (
               <option key={name} value={name}>{name}</option>
             ))}
           </select>
         </label>
         <label className="text-sm space-y-1.5">
-          <span className="text-xs text-cl-muted">Course</span>
+          <span className="text-xs text-cl-muted">{t('common.course')}</span>
           <select className="cl-input w-full" value={course} onChange={(e) => setCourse(e.target.value)}>
-            <option value="">All</option>
+            <option value="">{t('common.all')}</option>
             {courseNames.map((name) => (
               <option key={name} value={name}>{name}</option>
             ))}
           </select>
         </label>
         <label className="text-sm space-y-1.5">
-          <span className="text-xs text-cl-muted">Status</span>
+          <span className="text-xs text-cl-muted">{t('common.status')}</span>
           <select className="cl-input w-full" value={status} onChange={(e) => setStatus(e.target.value)}>
-            <option value="">All</option>
-            <option value="completed">Valid</option>
-            <option value="expiring_soon">Expiring soon</option>
-            <option value="expired">Expired</option>
-            <option value="assigned">Required</option>
+            <option value="">{t('common.all')}</option>
+            <option value="completed">{t('status.valid')}</option>
+            <option value="expiring_soon">{t('status.expiringSoon')}</option>
+            <option value="expired">{t('status.expired')}</option>
+            <option value="assigned">{t('status.required')}</option>
           </select>
         </label>
         <label className="text-sm space-y-1.5">
-          <span className="text-xs text-cl-muted">Type</span>
+          <span className="text-xs text-cl-muted">{t('common.type')}</span>
           <select className="cl-input w-full" value={courseType} onChange={(e) => setCourseType(e.target.value)}>
-            <option value="">All</option>
-            <option value="mandatory">Mandatory</option>
-            <option value="additional">Additional</option>
+            <option value="">{t('common.all')}</option>
+            <option value="mandatory">{t('courseType.mandatory')}</option>
+            <option value="additional">{t('courseType.additional')}</option>
           </select>
         </label>
         <div className="flex items-end md:col-span-3 xl:col-span-6">
           <button type="submit" className="cl-btn-primary" disabled={loading}>
-            {loading ? 'Loading…' : 'Apply filters'}
+            {loading ? t('common.loading') : t('common.applyFilters')}
           </button>
         </div>
       </form>
@@ -265,23 +267,23 @@ export default function MatrixPage() {
           <table className="min-w-[1100px] w-full text-sm">
             <thead>
               <tr className="text-left text-xs uppercase tracking-wider text-cl-muted border-b border-cl-border">
-                <th className="px-3 py-3 font-medium">Employee</th>
-                <th className="px-3 py-3 font-medium">Department</th>
-                <th className="px-3 py-3 font-medium">Course</th>
-                <th className="px-3 py-3 font-medium">Type</th>
-                <th className="px-3 py-3 font-medium">Valid (months)</th>
-                <th className="px-3 py-3 font-medium">Completed</th>
-                <th className="px-3 py-3 font-medium">Due</th>
-                <th className="px-3 py-3 font-medium">Status</th>
-                <th className="px-3 py-3 font-medium">Source</th>
-                <th className="px-3 py-3 font-medium">Action</th>
+                <th className="px-3 py-3 font-medium">{t('common.employee')}</th>
+                <th className="px-3 py-3 font-medium">{t('common.department')}</th>
+                <th className="px-3 py-3 font-medium">{t('common.course')}</th>
+                <th className="px-3 py-3 font-medium">{t('common.type')}</th>
+                <th className="px-3 py-3 font-medium">{t('matrix.validMonths')}</th>
+                <th className="px-3 py-3 font-medium">{t('common.completed')}</th>
+                <th className="px-3 py-3 font-medium">{t('common.due')}</th>
+                <th className="px-3 py-3 font-medium">{t('common.status')}</th>
+                <th className="px-3 py-3 font-medium">{t('common.source')}</th>
+                <th className="px-3 py-3 font-medium">{t('common.action')}</th>
               </tr>
             </thead>
             <tbody>
               {!rows.length && !loading ? (
                 <tr>
                   <td colSpan={10} className="px-4 py-8 text-center text-cl-muted">
-                    No training rows found.
+                    {t('matrix.empty')}
                   </td>
                 </tr>
               ) : (
@@ -300,8 +302,16 @@ export default function MatrixPage() {
                       )}
                     </td>
                     <td className="px-3 py-2.5 text-cl-muted whitespace-nowrap">{row.department || '—'}</td>
-                    <td className="px-3 py-2.5 text-cl-fg min-w-[180px]">{row.courseName || '—'}</td>
-                    <td className="px-3 py-2.5 text-cl-muted capitalize whitespace-nowrap">{row.courseType || '—'}</td>
+                    <td className="px-3 py-2.5 text-cl-fg min-w-[180px]">
+                      {row.courseName || '—'}
+                      {row.courseLevel > 1 && (
+                        <div className="text-xs text-cl-muted">{t('common.level', { level: row.courseLevel })}</div>
+                      )}
+                      {row.coveredByCourseTitle && (
+                        <div className="text-xs text-sky-300/90">{t('common.coveredBy', { title: row.coveredByCourseTitle })}</div>
+                      )}
+                    </td>
+                    <td className="px-3 py-2.5 text-cl-muted whitespace-nowrap">{formatCourseType(row.courseType)}</td>
                     <td className="px-3 py-2.5 text-cl-muted whitespace-nowrap">
                       {row.validityMonths == null ? '—' : row.validityMonths}
                     </td>
@@ -312,18 +322,18 @@ export default function MatrixPage() {
                         {formatStatus(row.status)}
                       </span>
                     </td>
-                    <td className="px-3 py-2.5 text-cl-muted capitalize whitespace-nowrap">{row.source || '—'}</td>
+                    <td className="px-3 py-2.5 text-cl-muted whitespace-nowrap">{formatSource(row.source)}</td>
                     <td className="px-3 py-2.5 whitespace-nowrap">
                       {row.conductAssessmentUrl ? (
                         <a href={row.conductAssessmentUrl} className="cl-btn-primary inline-flex text-xs px-3 py-1.5">
-                          Conduct assessment
+                          {t('action.conductAssessment')}
                         </a>
                       ) : row.assessmentUrl ? (
                         <a href={row.assessmentUrl} className="cl-btn-primary inline-flex text-xs px-3 py-1.5">
-                          Take assessment
+                          {t('action.takeAssessment')}
                         </a>
                       ) : row.trainerLed ? (
-                        <span className="text-xs text-cl-muted">Trainer-led</span>
+                        <span className="text-xs text-cl-muted">{t('action.trainerLed')}</span>
                       ) : (
                         <span className="text-cl-muted">—</span>
                       )}

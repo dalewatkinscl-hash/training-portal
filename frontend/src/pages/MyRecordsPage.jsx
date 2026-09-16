@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Clock3, GraduationCap } from 'lucide-react';
 import { fetchMyRecords } from '../lib/api';
 import RecordsTable from '../components/RecordsTable';
-import { formatDate, formatStatus, statusTone } from '../lib/training';
+import { statusTone } from '../lib/training';
+import { useI18n } from '../i18n/LanguageProvider';
 
 function Stat({ icon: Icon, label, value, tone = 'default' }) {
   const tones = {
@@ -23,6 +24,7 @@ function Stat({ icon: Icon, label, value, tone = 'default' }) {
 }
 
 export default function MyRecordsPage() {
+  const { t, formatDate, formatStatus } = useI18n();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [data, setData] = useState(null);
@@ -62,7 +64,7 @@ export default function MyRecordsPage() {
   );
 
   if (loading) {
-    return <p className="text-cl-muted text-sm">Loading your training profile…</p>;
+    return <p className="text-cl-muted text-sm">{t('myRecords.loading')}</p>;
   }
 
   if (error) {
@@ -74,25 +76,25 @@ export default function MyRecordsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-semibold text-cl-fg">My training records</h2>
+        <h2 className="text-xl font-semibold text-cl-fg">{t('myRecords.title')}</h2>
         <p className="text-sm text-cl-muted mt-1">
-          Your completions, expiries, and certificates from Assessment, CPC, and manual training.
+          {t('myRecords.subtitle')}
         </p>
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <Stat icon={GraduationCap} label="Total" value={summary.total ?? 0} />
-        <Stat icon={CheckCircle2} label="Valid" value={summary.valid ?? 0} tone="good" />
-        <Stat icon={Clock3} label="Expiring (30d)" value={summary.expiringSoon ?? 0} tone="warn" />
-        <Stat icon={AlertTriangle} label="Expired" value={summary.expired ?? 0} tone="bad" />
+        <Stat icon={GraduationCap} label={t('stats.total')} value={summary.total ?? 0} />
+        <Stat icon={CheckCircle2} label={t('stats.valid')} value={summary.valid ?? 0} tone="good" />
+        <Stat icon={Clock3} label={t('stats.expiring30d')} value={summary.expiringSoon ?? 0} tone="warn" />
+        <Stat icon={AlertTriangle} label={t('stats.expired')} value={summary.expired ?? 0} tone="bad" />
       </div>
 
       {conductRenewals.length > 0 && (
         <section className="cl-card p-5 space-y-3">
           <div>
-            <h3 className="text-sm font-semibold text-cl-fg">Conduct trainer-led assessments</h3>
+            <h3 className="text-sm font-semibold text-cl-fg">{t('myRecords.conductTitle')}</h3>
             <p className="text-sm text-cl-muted mt-1">
-              These courses are expired or expiring soon and can be renewed by conducting the linked assessment.
+              {t('myRecords.conductBody')}
             </p>
           </div>
           <ul className="space-y-2">
@@ -105,14 +107,14 @@ export default function MyRecordsPage() {
                   <div className="font-medium text-cl-fg">{item.courseTitle}</div>
                   <div className="text-xs text-cl-muted mt-0.5 flex flex-wrap gap-2 items-center">
                     <span className={`cl-badge ${statusTone(item.status)}`}>{formatStatus(item.status)}</span>
-                    <span>Due {formatDate(item.expiresAt)}</span>
+                    <span>{t('myRecords.dueOn', { date: formatDate(item.expiresAt) })}</span>
                     {item.assessmentQuizTitle && (
-                      <span>Assessment: {item.assessmentQuizTitle}</span>
+                      <span>{t('myRecords.assessment', { title: item.assessmentQuizTitle })}</span>
                     )}
                   </div>
                 </div>
                 <a href={item.conductAssessmentUrl} className="cl-btn-primary">
-                  Conduct assessment
+                  {t('action.conductAssessment')}
                 </a>
               </li>
             ))}
@@ -123,9 +125,9 @@ export default function MyRecordsPage() {
       {trainerLedRenewals.length > 0 && (
         <section className="cl-card p-5 space-y-3">
           <div>
-            <h3 className="text-sm font-semibold text-cl-fg">Trainer-led renewals</h3>
+            <h3 className="text-sm font-semibold text-cl-fg">{t('myRecords.trainerLedTitle')}</h3>
             <p className="text-sm text-cl-muted mt-1">
-              These courses are expired or expiring soon and must be renewed with a trainer.
+              {t('myRecords.trainerLedBody')}
             </p>
           </div>
           <ul className="space-y-2">
@@ -138,13 +140,13 @@ export default function MyRecordsPage() {
                   <div className="font-medium text-cl-fg">{item.courseTitle}</div>
                   <div className="text-xs text-cl-muted mt-0.5 flex flex-wrap gap-2 items-center">
                     <span className={`cl-badge ${statusTone(item.status)}`}>{formatStatus(item.status)}</span>
-                    <span>Due {formatDate(item.expiresAt)}</span>
+                    <span>{t('myRecords.dueOn', { date: formatDate(item.expiresAt) })}</span>
                     {item.assessmentQuizTitle && (
-                      <span>Assessment: {item.assessmentQuizTitle}</span>
+                      <span>{t('myRecords.assessment', { title: item.assessmentQuizTitle })}</span>
                     )}
                   </div>
                 </div>
-                <span className="text-xs text-cl-muted">Ask your trainer to conduct this</span>
+                <span className="text-xs text-cl-muted">{t('myRecords.askTrainer')}</span>
               </li>
             ))}
           </ul>
@@ -154,10 +156,9 @@ export default function MyRecordsPage() {
       {renewals.length > 0 && (
         <section className="cl-card p-5 space-y-3">
           <div>
-            <h3 className="text-sm font-semibold text-cl-fg">Renew via assessment</h3>
+            <h3 className="text-sm font-semibold text-cl-fg">{t('myRecords.renewTitle')}</h3>
             <p className="text-sm text-cl-muted mt-1">
-              These courses are expired or expiring soon. Take the linked assessment to update your record —
-              no separate assignment needed.
+              {t('myRecords.renewBody')}
             </p>
           </div>
           <ul className="space-y-2">
@@ -170,14 +171,14 @@ export default function MyRecordsPage() {
                   <div className="font-medium text-cl-fg">{item.courseTitle}</div>
                   <div className="text-xs text-cl-muted mt-0.5 flex flex-wrap gap-2 items-center">
                     <span className={`cl-badge ${statusTone(item.status)}`}>{formatStatus(item.status)}</span>
-                    <span>Due {formatDate(item.expiresAt)}</span>
+                    <span>{t('myRecords.dueOn', { date: formatDate(item.expiresAt) })}</span>
                     {item.assessmentQuizTitle && (
-                      <span>Assessment: {item.assessmentQuizTitle}</span>
+                      <span>{t('myRecords.assessment', { title: item.assessmentQuizTitle })}</span>
                     )}
                   </div>
                 </div>
                 <a href={item.assessmentUrl} className="cl-btn-primary">
-                  Take assessment
+                  {t('action.takeAssessment')}
                 </a>
               </li>
             ))}

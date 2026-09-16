@@ -14,6 +14,8 @@ import EmployeeDetailPage from './pages/EmployeeDetailPage';
 import MatrixPage from './pages/MatrixPage';
 import { EMPLOYEE_LOGIN_URL, PORTAL_KEY, canAdmin, canTrain, getRole } from './lib/training';
 import { fetchSession } from './lib/api';
+import { useI18n } from './i18n/LanguageProvider';
+import LanguageMenu from './components/LanguageMenu';
 
 function Guard({ allow, children }) {
   if (!allow) return <Navigate to="/" replace />;
@@ -21,6 +23,7 @@ function Guard({ allow, children }) {
 }
 
 export default function App() {
+  const { t } = useI18n();
   const [portalUser, setPortalUser] = useState(null);
   const [role, setRole] = useState('');
   const [loading, setLoading] = useState(true);
@@ -43,7 +46,7 @@ export default function App() {
         }
       } catch (error) {
         console.error(error);
-        if (!cancelled) setAuthError('Unable to verify your portal session.');
+        if (!cancelled) setAuthError('session');
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -71,18 +74,28 @@ export default function App() {
 
   if (authError) {
     return (
-      <div className="min-h-screen relative flex items-center justify-center p-8 text-red-300">
+      <div className="min-h-screen relative">
         <AmbientBackground />
-        <p className="relative z-10">{authError}</p>
+        <header className="cl-header">
+          <div className="max-w-7xl mx-auto px-4 py-3 flex justify-end">
+            <LanguageMenu />
+          </div>
+        </header>
+        <p className="relative z-10 mt-16 text-center text-red-300 px-4">{t('app.sessionError')}</p>
       </div>
     );
   }
 
   if (loading) {
     return (
-      <div className="min-h-screen relative flex items-center justify-center text-cl-muted">
+      <div className="min-h-screen relative">
         <AmbientBackground />
-        <p className="relative z-10">Checking Employee Portal session…</p>
+        <header className="cl-header">
+          <div className="max-w-7xl mx-auto px-4 py-3 flex justify-end">
+            <LanguageMenu />
+          </div>
+        </header>
+        <p className="relative z-10 mt-16 text-center text-cl-muted px-4">{t('app.checkingSession')}</p>
       </div>
     );
   }
@@ -115,7 +128,7 @@ export default function App() {
             path="/employees/:uid"
             element={
               <Guard allow={trainer}>
-                <EmployeeDetailPage />
+                <EmployeeDetailPage canRemoveCourses={admin} />
               </Guard>
             }
           />

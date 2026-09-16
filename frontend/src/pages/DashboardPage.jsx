@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { fetchDashboard } from '../lib/api';
 import RecordsTable from '../components/RecordsTable';
-import { formatDate } from '../lib/training';
+import { useI18n } from '../i18n/LanguageProvider';
 
 export default function DashboardPage() {
+  const { t, formatDate } = useI18n();
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -26,24 +27,24 @@ export default function DashboardPage() {
     };
   }, []);
 
-  if (loading) return <p className="text-cl-muted text-sm">Loading dashboard…</p>;
+  if (loading) return <p className="text-cl-muted text-sm">{t('dashboard.loading')}</p>;
   if (error) return <p className="text-rose-300 text-sm">{error}</p>;
 
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-semibold text-cl-fg">Training dashboard</h2>
+        <h2 className="text-xl font-semibold text-cl-fg">{t('dashboard.title')}</h2>
         <p className="text-sm text-cl-muted mt-1">
-          Master view of courses and completions across Assessment and CPC.
+          {t('dashboard.subtitle')}
         </p>
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {[
-          ['Active courses', data.coursesActive],
-          ['Completions', data.completionsTotal],
-          ['Expiring (30d)', data.expiringSoon],
-          ['Expired', data.expired],
+          [t('dashboard.activeCourses'), data.coursesActive],
+          [t('dashboard.completions'), data.completionsTotal],
+          [t('stats.expiring30d'), data.expiringSoon],
+          [t('stats.expired'), data.expired],
         ].map(([label, value]) => (
           <div key={label} className="cl-card p-4">
             <div className="text-xs uppercase tracking-wider text-cl-muted mb-2">{label}</div>
@@ -53,7 +54,7 @@ export default function DashboardPage() {
       </div>
 
       <div>
-        <h3 className="text-sm font-semibold text-cl-fg mb-3">Recent completions</h3>
+        <h3 className="text-sm font-semibold text-cl-fg mb-3">{t('dashboard.recent')}</h3>
         <RecordsTable
           completions={(data.recent || []).map((item) => ({
             ...item,

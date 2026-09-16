@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { createCompletionsBatch, fetchCourses, fetchEmployees } from '../lib/api';
+import { useI18n } from '../i18n/LanguageProvider';
 
 export default function LogCompletionPage() {
+  const { t, locale } = useI18n();
   const [searchParams] = useSearchParams();
   const [courses, setCourses] = useState([]);
   const [employees, setEmployees] = useState([]);
@@ -81,11 +83,11 @@ export default function LogCompletionPage() {
       .sort((a, b) =>
         String(a.employeeName || a.employeeEmail || '').localeCompare(
           String(b.employeeName || b.employeeEmail || ''),
-          'en',
+          locale,
           { sensitivity: 'base' },
         ),
       );
-  }, [employees, q, department]);
+  }, [employees, q, department, locale]);
 
   const selectedCourse = courses.find((course) => course.id === courseId) || null;
   const selectedCount = selected.size;
@@ -112,11 +114,11 @@ export default function LogCompletionPage() {
   const onSubmit = async (event) => {
     event.preventDefault();
     if (!courseId) {
-      setError('Select a course from the catalogue.');
+      setError(t('log.selectCourseError'));
       return;
     }
     if (!selectedCount) {
-      setError('Select at least one person.');
+      setError(t('log.selectPersonError'));
       return;
     }
 
@@ -162,21 +164,20 @@ export default function LogCompletionPage() {
     <div className="space-y-6 max-w-4xl">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-xl font-semibold text-cl-fg">Log a course</h2>
+          <h2 className="text-xl font-semibold text-cl-fg">{t('log.title')}</h2>
           <p className="text-sm text-cl-muted mt-1">
-            Set the course date, pick the course, tick everyone who attended, then submit once.
-            Each person&apos;s record is updated and a certificate is issued.
+            {t('log.subtitle')}
           </p>
         </div>
         <Link to="/courses" className="cl-btn-ghost">
-          Manage catalogue
+          {t('log.manageCatalogue')}
         </Link>
       </div>
 
       <form onSubmit={onSubmit} className="cl-card p-5 space-y-5">
         <div className="grid md:grid-cols-2 gap-4">
           <label className="block text-sm space-y-1.5">
-            <span className="text-cl-muted">Date of course</span>
+            <span className="text-cl-muted">{t('log.dateOfCourse')}</span>
             <input
               className="cl-input"
               type="date"
@@ -187,25 +188,26 @@ export default function LogCompletionPage() {
           </label>
 
           <label className="block text-sm space-y-1.5">
-            <span className="text-cl-muted">Course</span>
+            <span className="text-cl-muted">{t('common.course')}</span>
             <select
               className="cl-input"
               required
               value={courseId}
               onChange={(e) => setCourseId(e.target.value)}
             >
-              <option value="">Select from catalogue…</option>
+              <option value="">{t('log.selectCourse')}</option>
               {courses.map((course) => (
                 <option key={course.id} value={course.id}>
                   {course.title}
                   {course.code ? ` (${course.code})` : ''}
+                  {Number(course.level) > 1 ? ` · ${t('common.level', { level: course.level })}` : ''}
                 </option>
               ))}
             </select>
             <p className="text-xs text-cl-muted">
-              Need a new course?{' '}
+              {t('log.needNewCourse')}{' '}
               <Link to="/courses" className="text-cl-accent hover:underline">
-                Add it to the catalogue
+                {t('log.addToCatalogue')}
               </Link>
               .
             </p>
@@ -214,21 +216,22 @@ export default function LogCompletionPage() {
 
         {selectedCourse && (
           <p className="text-xs text-cl-muted">
-            Validity:{' '}
+            {t('log.validity')}{' '}
             {selectedCourse.validityMonths
-              ? `${selectedCourse.validityMonths} months`
-              : 'no expiry'}
+              ? t('courses.validityMonths', { n: selectedCourse.validityMonths })
+              : t('courses.noExpiry')}
             {selectedCourse.category ? ` · ${selectedCourse.category}` : ''}
+            {Number(selectedCourse.level) > 1 ? ` · ${t('common.level', { level: selectedCourse.level })}` : ''}
           </p>
         )}
 
         <label className="block text-sm space-y-1.5">
-          <span className="text-cl-muted">Notes (optional)</span>
+          <span className="text-cl-muted">{t('log.notes')}</span>
           <textarea
             className="cl-input min-h-[72px]"
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
-            placeholder="Trainer, location, group…"
+            placeholder={t('log.notesPlaceholder')}
           />
         </label>
 
@@ -238,48 +241,48 @@ export default function LogCompletionPage() {
             checked={createCertificate}
             onChange={(e) => setCreateCertificate(e.target.checked)}
           />
-          Issue certificate for each person (upload to SharePoint)
+          {t('log.issueCertificate')}
         </label>
 
         <div className="space-y-3">
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
-              <h3 className="text-sm font-semibold text-cl-fg">Attendees</h3>
+              <h3 className="text-sm font-semibold text-cl-fg">{t('log.attendees')}</h3>
               <p className="text-xs text-cl-muted mt-0.5">
-                {selectedCount} selected
+                {t('log.selected', { count: selectedCount })}
                 {filteredEmployees.length !== employees.length
-                  ? ` · showing ${filteredEmployees.length} of ${employees.length}`
-                  : ` · ${employees.length} people`}
+                  ? t('log.showing', { shown: filteredEmployees.length, total: employees.length })
+                  : t('log.peopleCount', { count: employees.length })}
               </p>
             </div>
             <div className="flex gap-2">
               <button type="button" className="cl-btn-ghost text-xs" onClick={selectVisible}>
-                Select visible
+                {t('log.selectVisible')}
               </button>
               <button type="button" className="cl-btn-ghost text-xs" onClick={clearSelection}>
-                Clear
+                {t('log.clear')}
               </button>
             </div>
           </div>
 
           <div className="grid md:grid-cols-2 gap-3">
             <label className="text-sm space-y-1.5">
-              <span className="text-xs text-cl-muted">Search</span>
+              <span className="text-xs text-cl-muted">{t('common.search')}</span>
               <input
                 className="cl-input"
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
-                placeholder="Name, email, department…"
+                placeholder={t('employees.searchPlaceholder')}
               />
             </label>
             <label className="text-sm space-y-1.5">
-              <span className="text-xs text-cl-muted">Department</span>
+              <span className="text-xs text-cl-muted">{t('common.department')}</span>
               <select
                 className="cl-input"
                 value={department}
                 onChange={(e) => setDepartment(e.target.value)}
               >
-                <option value="">All departments</option>
+                <option value="">{t('log.allDepartments')}</option>
                 {departments.map((dept) => (
                   <option key={dept} value={dept}>
                     {dept}
@@ -291,9 +294,9 @@ export default function LogCompletionPage() {
 
           <div className="border border-cl-border rounded-xl max-h-[28rem] overflow-y-auto">
             {loadingPeople ? (
-              <p className="p-4 text-sm text-cl-muted">Loading people…</p>
+              <p className="p-4 text-sm text-cl-muted">{t('log.loadingPeople')}</p>
             ) : filteredEmployees.length === 0 ? (
-              <p className="p-4 text-sm text-cl-muted">No people match these filters.</p>
+              <p className="p-4 text-sm text-cl-muted">{t('log.noPeople')}</p>
             ) : (
               <ul className="divide-y divide-cl-border/60">
                 {filteredEmployees.map((person) => {
@@ -313,7 +316,7 @@ export default function LogCompletionPage() {
                         />
                         <span className="min-w-0 flex-1">
                           <span className="block text-sm font-medium text-cl-fg truncate">
-                            {person.employeeName || 'Unnamed'}
+                            {person.employeeName || t('common.unnamed')}
                           </span>
                           <span className="block text-xs text-cl-muted truncate">
                             {[person.department, person.employeeEmail].filter(Boolean).join(' · ')
@@ -334,15 +337,16 @@ export default function LogCompletionPage() {
         {result && (
           <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 space-y-2">
             <p className="text-sm text-emerald-200 font-medium">
-              {result.course?.title || 'Course'} logged for {result.totals?.requested || 0} people
+              {t('log.logged', { course: result.course?.title || t('common.course'), count: result.totals?.requested || 0 })}
               {result.totals?.failed
-                ? ` (${result.totals.failed} failed)`
-                : ''}.
+                ? t('log.failedCount', { count: result.totals.failed })
+                : ''}
+              .
             </p>
             <p className="text-xs text-cl-muted">
-              {result.totals?.created || 0} new · {result.totals?.updated || 0} updated
+              {t('log.summary', { created: result.totals?.created || 0, updated: result.totals?.updated || 0 })}
               {createCertificate
-                ? ` · ${result.totals?.certificates || 0} certificates processed`
+                ? t('log.certsProcessed', { count: result.totals?.certificates || 0 })
                 : ''}
             </p>
             {(result.results || []).some((row) => !row.ok) && (
@@ -365,12 +369,12 @@ export default function LogCompletionPage() {
           disabled={saving || !courseId || selectedCount === 0}
         >
           {saving
-            ? `Saving ${selectedCount}…`
+            ? t('log.savingCount', { count: selectedCount })
             : selectedCount === 0
-              ? 'Select attendees'
+              ? t('log.selectAttendees')
               : selectedCount === 1
-                ? 'Submit for 1 person'
-                : `Submit for ${selectedCount} people`}
+                ? t('log.submitOne')
+                : t('log.submitMany', { count: selectedCount })}
         </button>
       </form>
     </div>

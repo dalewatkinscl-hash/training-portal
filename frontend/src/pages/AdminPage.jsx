@@ -9,6 +9,7 @@ import {
   saveAssessmentMap,
   autoMapAssessmentCourses,
 } from '../lib/api';
+import { useI18n } from '../i18n/LanguageProvider';
 
 function normalizeLabel(value) {
   return String(value || '')
@@ -49,6 +50,7 @@ function bestFolderForProfile(profile, folders) {
 }
 
 export default function AdminPage() {
+  const { t } = useI18n();
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
   const [savingUid, setSavingUid] = useState('');
@@ -176,7 +178,10 @@ export default function AdminPage() {
       if (!response.ok) throw new Error(response.error || 'Import failed.');
       setImportResult(response);
       setMessage(
-        `Imported ${response.summary?.completionsCreated || 0} new and ${response.summary?.completionsUpdated || 0} updated completions.`,
+        t('admin.importSummary', {
+          created: response.summary?.completionsCreated || 0,
+          updated: response.summary?.completionsUpdated || 0,
+        }),
       );
       await load();
     } catch (err) {
@@ -212,13 +217,17 @@ export default function AdminPage() {
           failed: totalFailed,
         });
         setMessage(
-          `Certificates: ${totalSucceeded} uploaded, ${totalFailed} failed, ${remaining} remaining.`,
+          t('admin.certsProgress', {
+            succeeded: totalSucceeded,
+            failed: totalFailed,
+            remaining,
+          }),
         );
         if (!continueUntilDone || remaining === 0) break;
       }
 
       if (lastResult && (lastResult.remaining || 0) === 0 && totalProcessed === 0) {
-        setMessage('All completed records already have SharePoint certificates.');
+        setMessage(t('admin.certsAlready'));
       }
     } catch (err) {
       setError(err.message || 'Certificate backfill failed.');
@@ -230,13 +239,13 @@ export default function AdminPage() {
   const confirmMapping = async (profile) => {
     const trainingFolderName = String(drafts[profile.employeeUid] || '').trim();
     if (!trainingFolderName) {
-      setError('Choose an existing SharePoint folder first.');
+      setError(t('admin.chooseFolder'));
       return;
     }
 
     const folderExists = folderOptions.some((folder) => folder.name === trainingFolderName);
     if (!folderExists) {
-      setError(`Folder “${trainingFolderName}” is not in the SharePoint list. Pick one from the dropdown.`);
+      setError(t('admin.folderMissing', { name: trainingFolderName }));
       return;
     }
 
@@ -251,7 +260,7 @@ export default function AdminPage() {
         createIfMissing: false,
       });
       if (!response.ok) throw new Error(response.error || 'Failed to save mapping.');
-      setMessage(`Mapped ${profile.employeeName} → ${trainingFolderName}`);
+      setMessage(t('admin.mappedEmployee', { name: profile.employeeName, folder: trainingFolderName }));
       await load();
     } catch (err) {
       setError(err.message || 'Failed to save mapping.');
@@ -263,7 +272,7 @@ export default function AdminPage() {
   const saveQuizCourseMap = async (quiz) => {
     const courseId = String(mapDrafts[String(quiz.id)] || '').trim();
     if (!courseId) {
-      setError('Choose a Training course for this assessment quiz.');
+      setError(t('admin.chooseCourseForQuiz'));
       return;
     }
     setSavingQuizId(String(quiz.id));
@@ -280,9 +289,9 @@ export default function AdminPage() {
       const course = courses.find((row) => row.id === courseId);
       const merge = response.merge || {};
       setMessage(
-        `Mapped “${quiz.title}” → “${course?.title || response.map?.courseTitle || 'course'}”.`
+        t('admin.mappedQuiz', { quiz: quiz.title, course: course?.title || response.map?.courseTitle || t('common.course') })
         + (merge.mergedEmployees
-          ? ` Merged ${merge.mergedEmployees} employee record(s), removed ${merge.deleted || 0} duplicate(s).`
+          ? t('admin.mergedRecords', { employees: merge.mergedEmployees, deleted: merge.deleted || 0 })
           : ''),
       );
       await load();
@@ -293,32 +302,31 @@ export default function AdminPage() {
     }
   };
 
-  if (loading) return <p className="text-cl-muted text-sm">Loading admin tools…</p>;
+  if (loading) return <p className="text-cl-muted text-sm">{t('admin.loading')}</p>;
 
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-semibold text-cl-fg">Training admin</h2>
+        <h2 className="text-xl font-semibold text-cl-fg">{t('admin.title')}</h2>
         <p className="text-sm text-cl-muted mt-1">
-          Import the Training Matrix CSV, map SharePoint folders, generate certificates, and amend dates.
+          {t('admin.subtitle')}
         </p>
       </div>
 
       <section className="cl-card p-5 space-y-3">
-        <h3 className="text-sm font-semibold text-cl-fg">Amend dates</h3>
+        <h3 className="text-sm font-semibold text-cl-fg">{t('admin.amendTitle')}</h3>
         <p className="text-sm text-cl-muted">
-          Correct completion or expiry dates on training records when data was entered wrongly.
+          {t('admin.amendBody')}
         </p>
         <Link to="/admin/amend" className="cl-btn-primary inline-flex">
-          Open amend dates
+          {t('admin.openAmend')}
         </Link>
       </section>
 
       <section className="cl-card p-5 space-y-3">
-        <h3 className="text-sm font-semibold text-cl-fg">Assessment quiz → Training course</h3>
+        <h3 className="text-sm font-semibold text-cl-fg">{t('admin.quizMapTitle')}</h3>
         <p className="text-sm text-cl-muted">
-          Map Assessment quizzes to existing Training courses so a pass updates the matching
-          matrix record (new date + certificate) instead of creating a duplicate course.
+          {t('admin.quizMapBody')}
         </p>
         <div className="flex flex-wrap items-center gap-3">
           <button
@@ -333,8 +341,8 @@ export default function AdminPage() {
                 const response = await autoMapAssessmentCourses();
                 if (!response.ok) throw new Error(response.error || 'Auto-map failed.');
                 setMessage(
-                  `Auto-mapped ${response.created?.length || 0} quiz(zes).`
-                  + (response.skipped?.length ? ` Skipped ${response.skipped.length}.` : ''),
+                  t('admin.autoMapped', { created: response.created?.length || 0 })
+                  + (response.skipped?.length ? t('admin.skipped', { count: response.skipped.length }) : ''),
                 );
                 await load();
               } catch (err) {
@@ -344,24 +352,24 @@ export default function AdminPage() {
               }
             }}
           >
-            {savingQuizId === '__auto__' ? 'Mapping…' : 'Auto-map suggested quizzes'}
+            {savingQuizId === '__auto__' ? t('admin.mapping') : t('admin.autoMap')}
           </button>
         </div>
         {!quizzesAvailable && (
           <p className="text-sm text-amber-200">
-            Could not load Assessment quizzes. Check ASSESSMENT_PORTAL_URL / provision secret, then refresh.
+            {t('admin.quizzesUnavailable')}
           </p>
         )}
         {!quizzes.length ? (
-          <p className="text-sm text-cl-muted">No Assessment quizzes found yet.</p>
+          <p className="text-sm text-cl-muted">{t('admin.noQuizzes')}</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead>
                 <tr className="text-left text-xs uppercase tracking-wider text-cl-muted border-b border-cl-border">
-                  <th className="px-3 py-2 font-medium">Assessment quiz</th>
-                  <th className="px-3 py-2 font-medium">Training course</th>
-                  <th className="px-3 py-2 font-medium">Status</th>
+                  <th className="px-3 py-2 font-medium">{t('admin.assessmentQuiz')}</th>
+                  <th className="px-3 py-2 font-medium">{t('admin.trainingCourse')}</th>
+                  <th className="px-3 py-2 font-medium">{t('common.status')}</th>
                   <th className="px-3 py-2 font-medium" />
                 </tr>
               </thead>
@@ -373,8 +381,8 @@ export default function AdminPage() {
                   return (
                     <tr key={quizId} className="border-b border-cl-border/60 last:border-0">
                       <td className="px-3 py-2.5 text-cl-fg font-medium">
-                        {quiz.title || 'Untitled quiz'}
-                        <div className="text-xs text-cl-muted font-normal">ID {quizId}</div>
+                        {quiz.title || t('admin.untitledQuiz')}
+                        <div className="text-xs text-cl-muted font-normal">{t('admin.quizId', { id: quizId })}</div>
                       </td>
                       <td className="px-3 py-2.5 min-w-[240px]">
                         <select
@@ -385,7 +393,7 @@ export default function AdminPage() {
                             [quizId]: e.target.value,
                           }))}
                         >
-                          <option value="">Select course…</option>
+                          <option value="">{t('admin.selectCourse')}</option>
                           {courses.map((course) => (
                             <option key={course.id} value={course.id}>
                               {course.title}
@@ -395,8 +403,8 @@ export default function AdminPage() {
                       </td>
                       <td className="px-3 py-2.5 text-cl-muted whitespace-nowrap">
                         {saved?.courseId
-                          ? `Mapped → ${saved.courseTitle || 'course'}`
-                          : 'Not mapped'}
+                          ? t('admin.mappedTo', { title: saved.courseTitle || t('common.course') })
+                          : t('admin.notMapped')}
                       </td>
                       <td className="px-3 py-2.5 text-right">
                         <button
@@ -405,7 +413,7 @@ export default function AdminPage() {
                           disabled={savingQuizId === quizId || !draftCourseId}
                           onClick={() => saveQuizCourseMap(quiz)}
                         >
-                          {savingQuizId === quizId ? 'Saving…' : 'Save map'}
+                          {savingQuizId === quizId ? t('common.saving') : t('admin.saveMap')}
                         </button>
                       </td>
                     </tr>
@@ -429,10 +437,9 @@ export default function AdminPage() {
       )}
 
       <section className="cl-card p-5 space-y-3">
-        <h3 className="text-sm font-semibold text-cl-fg">Import Training Matrix</h3>
+        <h3 className="text-sm font-semibold text-cl-fg">{t('admin.importTitle')}</h3>
         <p className="text-sm text-cl-muted">
-          Import the Training Matrix CSV. Matches employees by name to Employee Portal users,
-          creates courses, and imports completions (no certificates on import).
+          {t('admin.importBody')}
         </p>
         <div className="flex flex-wrap items-center gap-3">
           <input
@@ -452,7 +459,10 @@ export default function AdminPage() {
                 if (!response.ok) throw new Error(response.error || 'Import failed.');
                 setImportResult(response);
                 setMessage(
-                  `Imported ${response.summary?.completionsCreated || 0} new and ${response.summary?.completionsUpdated || 0} updated completions.`,
+                  t('admin.importSummary', {
+                    created: response.summary?.completionsCreated || 0,
+                    updated: response.summary?.completionsUpdated || 0,
+                  }),
                 );
                 await load();
               } catch (err) {
@@ -469,21 +479,21 @@ export default function AdminPage() {
             disabled={importing}
             className="cl-btn-primary disabled:opacity-50"
           >
-            {importing ? 'Importing…' : 'Import bundled CSV'}
+            {importing ? t('admin.importing') : t('admin.importBundled')}
           </button>
         </div>
 
         {importResult?.summary && (
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-2">
             {[
-              ['Rows', importResult.summary.rows],
-              ['Matched employees', importResult.summary.employeesMatched],
-              ['Completions created', importResult.summary.completionsCreated],
-              ['Completions updated', importResult.summary.completionsUpdated],
-              ['Courses created', importResult.summary.coursesCreated],
-              ['Unmatched', importResult.summary.employeesUnmatched],
-              ['Ambiguous', importResult.summary.employeesAmbiguous],
-              ['Skipped rows', importResult.summary.completionsSkipped],
+              [t('admin.statRows'), importResult.summary.rows],
+              [t('admin.statMatched'), importResult.summary.employeesMatched],
+              [t('admin.statCreated'), importResult.summary.completionsCreated],
+              [t('admin.statUpdated'), importResult.summary.completionsUpdated],
+              [t('admin.statCourses'), importResult.summary.coursesCreated],
+              [t('admin.statUnmatched'), importResult.summary.employeesUnmatched],
+              [t('admin.statAmbiguous'), importResult.summary.employeesAmbiguous],
+              [t('admin.statSkipped'), importResult.summary.completionsSkipped],
             ].map(([label, value]) => (
               <div key={label} className="rounded-lg border border-cl-border bg-black/20 px-3 py-2">
                 <p className="text-[11px] uppercase tracking-wider text-cl-muted">{label}</p>
@@ -495,13 +505,13 @@ export default function AdminPage() {
 
         {importResult?.unmatched?.length > 0 && (
           <div className="pt-2">
-            <p className="text-sm text-amber-200 mb-2">Unmatched employees (fix names in Employee Portal, then re-import)</p>
+            <p className="text-sm text-amber-200 mb-2">{t('admin.unmatchedTitle')}</p>
             <ul className="text-sm text-cl-muted space-y-1 max-h-40 overflow-y-auto">
               {importResult.unmatched.map((row) => (
                 <li key={row.employeeName}>
                   {row.employeeName}
                   {row.department ? ` · ${row.department}` : ''}
-                  {` · ${row.rowCount} rows`}
+                  {` · ${t('admin.rowCount', { count: row.rowCount })}`}
                 </li>
               ))}
             </ul>
@@ -510,7 +520,7 @@ export default function AdminPage() {
 
         {importResult?.ambiguous?.length > 0 && (
           <div className="pt-2">
-            <p className="text-sm text-amber-200 mb-2">Ambiguous name matches</p>
+            <p className="text-sm text-amber-200 mb-2">{t('admin.ambiguousTitle')}</p>
             <ul className="text-sm text-cl-muted space-y-2 max-h-40 overflow-y-auto">
               {importResult.ambiguous.map((row) => (
                 <li key={row.employeeName}>
@@ -525,11 +535,9 @@ export default function AdminPage() {
       </section>
 
       <section className="cl-card p-5 space-y-3">
-        <h3 className="text-sm font-semibold text-cl-fg">Generate certificates</h3>
+        <h3 className="text-sm font-semibold text-cl-fg">{t('admin.certsTitle')}</h3>
         <p className="text-sm text-cl-muted">
-          Create PDF certificates for completed training records and store them in SharePoint as
-          {' '}<code className="text-cl-fg">/Employee Name/Certificates/Course Name/Course Name.pdf</code>
-          {' '}(uses the mapped folder when set). New completions do this automatically.
+          {t('admin.certsBody')}
         </p>
         <div className="flex flex-wrap items-center gap-3">
           <button
@@ -538,7 +546,7 @@ export default function AdminPage() {
             disabled={backfilling || !sharePointConfigured}
             className="cl-btn-ghost disabled:opacity-50"
           >
-            {backfilling ? 'Generating…' : 'Generate next batch (25)'}
+            {backfilling ? t('admin.generating') : t('admin.generateBatch')}
           </button>
           <button
             type="button"
@@ -546,16 +554,16 @@ export default function AdminPage() {
             disabled={backfilling || !sharePointConfigured}
             className="cl-btn-primary disabled:opacity-50"
           >
-            {backfilling ? 'Generating…' : 'Generate all missing certificates'}
+            {backfilling ? t('admin.generating') : t('admin.generateAll')}
           </button>
         </div>
         {backfillResult && (
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-2">
             {[
-              ['Processed', backfillResult.processed],
-              ['Uploaded', backfillResult.succeeded],
-              ['Failed', backfillResult.failed],
-              ['Remaining', backfillResult.remaining],
+              [t('admin.processed'), backfillResult.processed],
+              [t('admin.uploaded'), backfillResult.succeeded],
+              [t('admin.failed'), backfillResult.failed],
+              [t('admin.remaining'), backfillResult.remaining],
             ].map(([label, value]) => (
               <div key={label} className="rounded-lg border border-cl-border bg-black/20 px-3 py-2">
                 <p className="text-[11px] uppercase tracking-wider text-cl-muted">{label}</p>
@@ -569,10 +577,10 @@ export default function AdminPage() {
       <section className="cl-card p-5 space-y-4">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h3 className="text-sm font-semibold text-cl-fg">SharePoint folder mapping</h3>
+            <h3 className="text-sm font-semibold text-cl-fg">{t('admin.mappingTitle')}</h3>
             <p className="text-sm text-cl-muted mt-1">
-              Choose an existing folder from Employee Training Documents for each employee.
-              {!sharePointConfigured ? ' · SharePoint credentials not configured' : ''}
+              {t('admin.mappingBody')}
+              {!sharePointConfigured ? t('admin.spNotConfiguredShort') : ''}
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -581,37 +589,37 @@ export default function AdminPage() {
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
             >
-              <option value="all">All employees</option>
-              <option value="unconfirmed">Needs mapping</option>
-              <option value="confirmed">Confirmed</option>
+              <option value="all">{t('admin.allEmployees')}</option>
+              <option value="unconfirmed">{t('admin.needsMapping')}</option>
+              <option value="confirmed">{t('admin.confirmed')}</option>
             </select>
-            <p className="text-xs text-cl-muted">{folderOptions.length} folders loaded</p>
+            <p className="text-xs text-cl-muted">{t('admin.foldersLoaded', { count: folderOptions.length })}</p>
           </div>
         </div>
 
         {!sharePointConfigured && (
           <p className="text-sm text-amber-200">
-            SharePoint is not configured, so folders cannot be listed yet.
+            {t('admin.spNotConfigured')}
           </p>
         )}
 
         {sharePointConfigured && folderOptions.length === 0 && (
           <p className="text-sm text-amber-200">
-            No folders were returned from SharePoint. Check Graph access to the Training site library.
+            {t('admin.noFolders')}
           </p>
         )}
 
         {!profiles.length ? (
-          <p className="text-sm text-cl-muted">No employees to map yet. Run the matrix import first.</p>
+          <p className="text-sm text-cl-muted">{t('admin.noEmployeesMap')}</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-cl-muted border-b border-cl-border">
-                  <th className="py-2 pr-3 font-medium">Employee</th>
-                  <th className="py-2 pr-3 font-medium">Email</th>
-                  <th className="py-2 pr-3 font-medium">SharePoint folder</th>
-                  <th className="py-2 font-medium">Action</th>
+                  <th className="py-2 pr-3 font-medium">{t('common.employee')}</th>
+                  <th className="py-2 pr-3 font-medium">{t('admin.email')}</th>
+                  <th className="py-2 pr-3 font-medium">{t('admin.spFolder')}</th>
+                  <th className="py-2 font-medium">{t('common.action')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -633,7 +641,7 @@ export default function AdminPage() {
                       <td className="py-3 pr-3 text-cl-fg">
                         <div>{profile.employeeName || '—'}</div>
                         {profile.matrixName && profile.matrixName !== profile.employeeName && (
-                          <div className="text-xs text-cl-muted">Matrix: {profile.matrixName}</div>
+                          <div className="text-xs text-cl-muted">{t('admin.matrixName', { name: profile.matrixName })}</div>
                         )}
                       </td>
                       <td className="py-3 pr-3 text-cl-muted">{profile.employeeEmail || '—'}</td>
@@ -646,29 +654,29 @@ export default function AdminPage() {
                             [profile.employeeUid]: e.target.value,
                           }))}
                         >
-                          <option value="">Select a SharePoint folder…</option>
+                          <option value="">{t('admin.selectFolder')}</option>
                           {suggestions.length > 0 && (
-                            <optgroup label="Suggested matches">
+                            <optgroup label={t('admin.suggestedMatches')}>
                               {suggestions.map((folder) => (
                                 <option key={`s-${folder.id || folder.name}`} value={folder.name}>
                                   {folder.name}
-                                  {mappedFolderSet.has(normalizeLabel(folder.name)) ? ' (already mapped)' : ''}
+                                  {mappedFolderSet.has(normalizeLabel(folder.name)) ? t('admin.alreadyMapped') : ''}
                                 </option>
                               ))}
                             </optgroup>
                           )}
-                          <optgroup label="All existing folders">
+                          <optgroup label={t('admin.allFolders')}>
                             {(suggestions.length ? otherFolders : folderOptions).map((folder) => (
                               <option key={folder.id || folder.name} value={folder.name}>
                                 {folder.name}
-                                {mappedFolderSet.has(normalizeLabel(folder.name)) ? ' (already mapped)' : ''}
+                                {mappedFolderSet.has(normalizeLabel(folder.name)) ? t('admin.alreadyMapped') : ''}
                               </option>
                             ))}
                           </optgroup>
                         </select>
                         {profile.trainingFolderConfirmedAt && (
                           <p className="text-[11px] text-emerald-300/80 mt-1">
-                            Confirmed as {profile.trainingFolderName}
+                            {t('admin.confirmedAs', { name: profile.trainingFolderName })}
                           </p>
                         )}
                       </td>
@@ -679,7 +687,7 @@ export default function AdminPage() {
                           disabled={savingUid === profile.employeeUid || !selected}
                           onClick={() => confirmMapping(profile)}
                         >
-                          {savingUid === profile.employeeUid ? 'Saving…' : 'Save mapping'}
+                          {savingUid === profile.employeeUid ? t('common.saving') : t('admin.saveMapping')}
                         </button>
                       </td>
                     </tr>
@@ -693,7 +701,7 @@ export default function AdminPage() {
         {unmappedFolders.length > 0 && (
           <div>
             <p className="text-sm text-cl-muted mb-2">
-              Folders in SharePoint not yet confirmed against a portal user ({unmappedFolders.length})
+              {t('admin.unmappedFolders', { count: unmappedFolders.length })}
             </p>
             <div className="flex flex-wrap gap-2">
               {unmappedFolders.slice(0, 60).map((folder) => (

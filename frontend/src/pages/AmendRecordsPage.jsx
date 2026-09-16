@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { fetchCompletions, updateCompletion } from '../lib/api';
-import { formatDate, formatStatus, statusTone } from '../lib/training';
+import { deleteCompletion, fetchCompletions, updateCompletion } from '../lib/api';
+import { statusTone } from '../lib/training';
+import { useI18n } from '../i18n/LanguageProvider';
 
 function toDateInput(value) {
   if (!value) return '';
@@ -11,6 +12,7 @@ function toDateInput(value) {
 }
 
 export default function AmendRecordsPage() {
+  const { t, formatDate, formatStatus } = useI18n();
   const [completions, setCompletions] = useState([]);
   const [q, setQ] = useState('');
   const [loading, setLoading] = useState(true);
@@ -19,6 +21,8 @@ export default function AmendRecordsPage() {
   const [editingId, setEditingId] = useState('');
   const [draft, setDraft] = useState({ completedAt: '', expiresAt: '', notes: '' });
   const [saving, setSaving] = useState(false);
+  const [removingId, setRemovingId] = useState('');
+  const [confirmingId, setConfirmingId] = useState('');
 
   const load = async (params = {}) => {
     const response = await fetchCompletions({ scope: 'all', ...params });
@@ -64,12 +68,13 @@ export default function AmendRecordsPage() {
   const startEdit = (item) => {
     setEditingId(item.id);
     setDraft({
-      completedAt: toDateInput(item.completedAt),
-      expiresAt: toDateInput(item.expiresAt),
+      completedAt: toDateInput(item.nativeCompletedAt || item.completedAt),
+      expiresAt: toDateInput(item.nativeExpiresAt || item.expiresAt),
       notes: item.notes || '',
     });
     setMessage('');
     setError('');
+    setConfirmingId('');
   };
 
   const cancelEdit = () => {
@@ -88,7 +93,7 @@ export default function AmendRecordsPage() {
         notes: draft.notes,
       });
       if (!response.ok) throw new Error(response.error || 'Failed to save changes.');
-      setMessage(`Updated ${item.employeeName || 'record'} · ${item.courseTitle || 'course'}.`);
+      setMessage(t('amend.updated', { name: item.employeeName || t('common.employee'), course: item.courseTitle || t('common.course') }));
       cancelEdit();
       await load({ q });
     } catch (err) {
@@ -98,32 +103,49 @@ export default function AmendRecordsPage() {
     }
   };
 
+  const removeRecord = async (item) => {
+    setRemovingId(item.id);
+    setError('');
+    setMessage('');
+    try {
+      const response = await deleteCompletion(item.id);
+      if (!response.ok) throw new Error(response.error || 'Failed to remove course.');
+      setMessage(t('amend.removed', { course: item.courseTitle || t('common.course'), name: item.employeeName || t('common.employee') }));
+      setConfirmingId('');
+      await load({ q });
+    } catch (err) {
+      setError(err.message || 'Failed to remove course.');
+    } finally {
+      setRemovingId('');
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <Link to="/admin" className="text-xs text-cl-muted hover:text-cl-fg">
-            ← Admin
+            {t('amend.backAdmin')}
           </Link>
-          <h2 className="text-xl font-semibold text-cl-fg mt-2">Amend training dates</h2>
+          <h2 className="text-xl font-semibold text-cl-fg mt-2">{t('amend.title')}</h2>
           <p className="text-sm text-cl-muted mt-1">
-            Correct completion and expiry dates. Status updates automatically from the new dates.
+            {t('amend.subtitle')}
           </p>
         </div>
       </div>
 
       <form onSubmit={search} className="cl-card p-4 flex flex-wrap gap-3 items-end">
         <label className="text-sm space-y-1.5 flex-1 min-w-[220px]">
-          <span className="text-xs text-cl-muted">Search employee or course</span>
+          <span className="text-xs text-cl-muted">{t('amend.searchLabel')}</span>
           <input
             className="cl-input w-full"
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Name, email, course…"
+            placeholder={t('amend.searchPlaceholder')}
           />
         </label>
         <button type="submit" className="cl-btn-primary" disabled={loading}>
-          {loading ? 'Searching…' : 'Search'}
+          {loading ? t('amend.searching') : t('amend.search')}
         </button>
       </form>
 
@@ -135,23 +157,23 @@ export default function AmendRecordsPage() {
           <table className="min-w-[1100px] w-full text-sm">
             <thead>
               <tr className="text-left text-xs uppercase tracking-wider text-cl-muted border-b border-cl-border">
-                <th className="px-3 py-3 font-medium">Employee</th>
-                <th className="px-3 py-3 font-medium">Course</th>
-                <th className="px-3 py-3 font-medium">Completed</th>
-                <th className="px-3 py-3 font-medium">Expires</th>
-                <th className="px-3 py-3 font-medium">Status</th>
-                <th className="px-3 py-3 font-medium">Notes</th>
+                <th className="px-3 py-3 font-medium">{t('common.employee')}</th>
+                <th className="px-3 py-3 font-medium">{t('common.course')}</th>
+                <th className="px-3 py-3 font-medium">{t('common.completed')}</th>
+                <th className="px-3 py-3 font-medium">{t('common.expires')}</th>
+                <th className="px-3 py-3 font-medium">{t('common.status')}</th>
+                <th className="px-3 py-3 font-medium">{t('common.notes')}</th>
                 <th className="px-3 py-3 font-medium" />
               </tr>
             </thead>
             <tbody>
               {loading && !completions.length ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-cl-muted">Loading…</td>
+                  <td colSpan={7} className="px-4 py-8 text-center text-cl-muted">{t('common.loading')}</td>
                 </tr>
               ) : !completions.length ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-cl-muted">No records found.</td>
+                  <td colSpan={7} className="px-4 py-8 text-center text-cl-muted">{t('amend.empty')}</td>
                 </tr>
               ) : (
                 completions.map((item) => {
@@ -164,7 +186,17 @@ export default function AmendRecordsPage() {
                           <div className="text-xs text-cl-muted font-normal">{item.employeeEmail}</div>
                         )}
                       </td>
-                      <td className="px-3 py-2.5 text-cl-fg">{item.courseTitle || '—'}</td>
+                      <td className="px-3 py-2.5 text-cl-fg">
+                        {item.courseTitle || '—'}
+                        {item.courseLevel > 1 && (
+                          <div className="text-xs text-cl-muted font-normal">{t('common.level', { level: item.courseLevel })}</div>
+                        )}
+                        {item.coveredByCourseTitle && (
+                          <div className="text-xs text-sky-300/90 font-normal">
+                            {t('common.coveredBy', { title: item.coveredByCourseTitle })}
+                          </div>
+                        )}
+                      </td>
                       <td className="px-3 py-2.5">
                         {editing ? (
                           <input
@@ -198,7 +230,7 @@ export default function AmendRecordsPage() {
                             className="cl-input w-full"
                             value={draft.notes}
                             onChange={(e) => setDraft((prev) => ({ ...prev, notes: e.target.value }))}
-                            placeholder="Optional note"
+                            placeholder={t('amend.optionalNote')}
                           />
                         ) : (
                           <span className="text-cl-muted text-xs">{item.notes || '—'}</span>
@@ -213,7 +245,7 @@ export default function AmendRecordsPage() {
                               disabled={saving}
                               onClick={cancelEdit}
                             >
-                              Cancel
+                              {t('common.cancel')}
                             </button>
                             <button
                               type="button"
@@ -221,13 +253,48 @@ export default function AmendRecordsPage() {
                               disabled={saving}
                               onClick={() => saveEdit(item)}
                             >
-                              {saving ? 'Saving…' : 'Save'}
+                              {saving ? t('common.saving') : t('common.save')}
                             </button>
                           </div>
                         ) : (
-                          <button type="button" className="cl-btn-ghost" onClick={() => startEdit(item)}>
-                            Amend
-                          </button>
+                          confirmingId === item.id ? (
+                            <div className="flex gap-2 justify-end">
+                              <button
+                                type="button"
+                                className="cl-btn-ghost"
+                                disabled={Boolean(removingId)}
+                                onClick={() => setConfirmingId('')}
+                              >
+                                {t('common.cancel')}
+                              </button>
+                              <button
+                                type="button"
+                                className="cl-btn-ghost text-rose-300 border-rose-400/40 hover:bg-rose-500/10"
+                                disabled={Boolean(removingId)}
+                                onClick={() => removeRecord(item)}
+                              >
+                                {removingId === item.id ? t('action.removing') : t('action.confirmRemove')}
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex gap-2 justify-end">
+                              <button type="button" className="cl-btn-ghost" onClick={() => startEdit(item)}>
+                                {t('amend.amend')}
+                              </button>
+                              <button
+                                type="button"
+                                className="cl-btn-ghost text-rose-300 border-rose-400/30 hover:bg-rose-500/10"
+                                disabled={Boolean(removingId) || Boolean(editingId)}
+                                onClick={() => {
+                                  setConfirmingId(item.id);
+                                  setError('');
+                                  setMessage('');
+                                }}
+                              >
+                                {t('common.remove')}
+                              </button>
+                            </div>
+                          )
                         )}
                       </td>
                     </tr>

@@ -20,6 +20,11 @@ const {
   normalizeName,
   parseTrainingMatrixCsv,
 } = require('./matrixImport');
+const {
+  parseCourseLevel,
+  buildCourseTierIndex,
+  applyCourseTierOverrides,
+} = require('./courseTiers');
 const fs = require('fs');
 const path = require('path');
 
@@ -183,6 +188,95 @@ async function fetchPortalUsersForSync() {
   return Array.isArray(data.users) ? data.users : [];
 }
 
+function portalUserUid(user) {
+  return String(user?.uid || user?.id || '').trim();
+}
+
+function userHasTrainingAccess(user) {
+  if (!user) return false;
+  if (user.disabled === true || user.active === false || user.isActive === false) return false;
+  if (Object.prototype.hasOwnProperty.call(user, 'trainingRole') && !String(user.trainingRole || '').trim()) {
+    return false;
+  }
+  const access = user.portalsAccess || user.portals || user.portalAccess;
+  if (access && typeof access === 'object') {
+    const role = access[PORTAL_KEY] ?? access.training ?? access.trainingApp;
+    return Boolean(String(role || '').trim());
+  }
+  if (user.trainingAccess === false || user.hasTrainingAccess === false) return false;
+  return true;
+}
+
+async function loadAllowedEmployeeUids() {
+  try {
+    const users = await fetchPortalUsersForSync();
+    if (!users.length) {
+      throw Object.assign(new Error('Employee Portal returned no training users.'), { status: 502 });
+    }
+    const allowed = new Set();
+    users.forEach((user) => {
+      const uid = portalUserUid(user);
+      if (uid && userHasTrainingAccess(user)) allowed.add(uid);
+    });
+    if (!allowed.size) {
+      throw Object.assign(new Error('Employee Portal returned no users with training access.'), { status: 502 });
+    }
+    return { source: 'portal', allowed };
+  } catch (error) {
+    console.warn('portal access sync failed', error.message || error);
+    return { source: 'profiles', allowed: null };
+  }
+}
+
+async function persistDirectoryAccessFlags(allowedUids, profilesSnap) {
+  const jobs = [];
+  profilesSnap.docs.forEach((doc) => {
+    const data = doc.data() || {};
+    const allowed = allowedUids.has(doc.id);
+    if (allowed && data.accessEnabled === false) {
+      jobs.push(markEmployeeAccess(doc.id, true));
+    } else if (!allowed && data.accessEnabled !== false) {
+      jobs.push(markEmployeeAccess(doc.id, false));
+    }
+  });
+  if (!jobs.length) return;
+  await Promise.all(jobs);
+}
+
+async function loadDirectoryAccess(profilesSnap = null) {
+  const [snap, access] = await Promise.all([
+    profilesSnap ? Promise.resolve(profilesSnap) : db.collection('employee_profiles').get(),
+    loadAllowedEmployeeUids(),
+  ]);
+  if (access.source === 'portal') {
+    persistDirectoryAccessFlags(access.allowed, snap).catch((error) => {
+      console.warn('access flag sync failed', error.message || error);
+    });
+  }
+  return {
+    profilesSnap: snap,
+    allowedUids: access.allowed,
+    accessSource: access.source,
+  };
+}
+
+function hasDirectoryAccess(uid, allowedUids, profile) {
+  const id = String(uid || profile?.employeeUid || '').trim();
+  if (!id) return false;
+  if (allowedUids) return allowedUids.has(id);
+  if (profile?.accessEnabled === false) return false;
+  return true;
+}
+
+async function markEmployeeAccess(uid, enabled, extra = {}) {
+  if (!uid) return null;
+  return upsertEmployeeProfile(uid, {
+    accessEnabled: enabled,
+    accessRevokedAt: enabled ? FieldValue.delete() : FieldValue.serverTimestamp(),
+    ...extra,
+  });
+}
+
 function serializeEmployeeProfile(docOrData) {
   const data = docOrData?.data ? docOrData.data() : docOrData;
   const id = docOrData?.id || data?.employeeUid || data?.id || '';
@@ -196,6 +290,10 @@ function serializeEmployeeProfile(docOrData) {
     trainingFolderWebUrl: data.trainingFolderWebUrl || '',
     trainingFolderConfirmedAt: data.trainingFolderConfirmedAt?.toDate?.()?.toISOString?.()
       || data.trainingFolderConfirmedAt
+      || null,
+    accessEnabled: data.accessEnabled !== false,
+    accessRevokedAt: data.accessRevokedAt?.toDate?.()?.toISOString?.()
+      || data.accessRevokedAt
       || null,
     matrixName: data.matrixName || '',
     updatedAt: data.updatedAt?.toDate?.()?.toISOString?.() || null,
@@ -241,6 +339,8 @@ function serializeCourse(doc) {
     category: data.category || 'general',
     description: data.description || '',
     validityMonths: data.validityMonths ?? null,
+    level: parseCourseLevel(data.level) || 1,
+    tierFamily: data.tierFamily || '',
     active: data.active !== false,
     sourceDefault: data.sourceDefault || 'manual',
     createdAt: toIso(data.createdAt),
@@ -265,6 +365,19 @@ function computeStatus(expiresAt, completedAt, now = Date.now()) {
     }
   }
   return 'completed';
+}
+
+function courseIndexFromSnap(snap) {
+  return buildCourseTierIndex((snap?.docs || []).map(serializeCourse));
+}
+
+async function loadCourseTierIndex() {
+  const snap = await db.collection('courses').get();
+  return courseIndexFromSnap(snap);
+}
+
+function withCourseTiers(completions, courseIndex, now = Date.now()) {
+  return applyCourseTierOverrides(completions, courseIndex, { now, computeStatus });
 }
 
 function serializeCompletion(doc) {
@@ -320,6 +433,35 @@ async function loadCourse(courseId) {
   const snap = await db.collection('courses').doc(courseId).get();
   if (!snap.exists) return null;
   return { id: snap.id, ...snap.data() };
+}
+
+function courseExclusionId(employeeUid, courseTitle) {
+  const titleKey = normalizeName(courseTitle).replace(/\s+/g, '-');
+  return `${String(employeeUid || '').trim()}__${titleKey}`.slice(0, 700);
+}
+
+async function saveCourseExclusion(completion, actor = {}) {
+  const employeeUid = completion.employeeUid || '';
+  const courseTitle = completion.courseTitle || '';
+  if (!employeeUid || !courseTitle) return;
+  await db.collection('course_exclusions').doc(courseExclusionId(employeeUid, courseTitle)).set({
+    employeeUid,
+    courseId: completion.courseId || '',
+    courseTitle,
+    employeeName: completion.employeeName || '',
+    employeeEmail: completion.employeeEmail || '',
+    removedByUid: actor.uid || '',
+    removedByName: actor.fullName || actor.email || 'admin',
+    removedAt: FieldValue.serverTimestamp(),
+    sourceCompletionId: completion.id || '',
+  });
+}
+
+async function clearCourseExclusion(employeeUid, courseTitle) {
+  if (!employeeUid || !courseTitle) return;
+  const ref = db.collection('course_exclusions').doc(courseExclusionId(employeeUid, courseTitle));
+  const snap = await ref.get();
+  if (snap.exists) await ref.delete();
 }
 
 async function findExistingIngest(source, sourceExternalId) {
@@ -600,6 +742,7 @@ async function mergeAliasCompletionsIntoCourse({ quizTitle, courseId, courseTitl
         employeeUid,
         employeeName: newestData.employeeName || profile?.employeeName || '',
         employeeEmail: newestData.employeeEmail || profile?.employeeEmail || '',
+        courseId,
         courseTitle: courseTitle || 'Training',
         completedAt: completedAt || new Date(),
         expiresAt,
@@ -737,7 +880,9 @@ async function upsertCompletionRecord(payload, actor = {}) {
       employeeUid,
       employeeName: employeeName || profile?.employeeName || '',
       employeeEmail: employeeEmail || profile?.employeeEmail || '',
+      courseId: resolvedCourseId,
       courseTitle: resolvedTitle,
+      courseLevel: parseCourseLevel(course?.level) || 1,
       completedAt: completedDate,
       expiresAt: expiryDate,
       source,
@@ -764,6 +909,7 @@ async function upsertCompletionRecord(payload, actor = {}) {
   }
 
   const snap = await ref.get();
+  await clearCourseExclusion(employeeUid, resolvedTitle);
   return { completion: serializeCompletion(snap), isNew };
 }
 
@@ -772,6 +918,8 @@ async function maybeIssueCertificate(options) {
     completionId,
     employeeName,
     courseTitle,
+    courseId = '',
+    courseLevel = null,
     completedAt,
     expiresAt,
     source,
@@ -780,9 +928,17 @@ async function maybeIssueCertificate(options) {
     isActive,
   } = options;
 
+  let resolvedLevel = parseCourseLevel(courseLevel);
+  if (!resolvedLevel && courseId) {
+    const course = await loadCourse(courseId);
+    resolvedLevel = parseCourseLevel(course?.level);
+  }
+  resolvedLevel = resolvedLevel || 1;
+
   const pdfBuffer = await buildTrainingCertificatePdf({
     employeeName,
     courseTitle,
+    courseLevel: resolvedLevel,
     completedAt,
     expiresAt,
     certificateId: completionId,
@@ -933,6 +1089,8 @@ app.post('/api/courses', async (req, res) => {
     validityMonths: req.body?.validityMonths === '' || req.body?.validityMonths == null
       ? null
       : Number(req.body.validityMonths),
+    level: parseCourseLevel(req.body?.level) || 1,
+    tierFamily: String(req.body?.tierFamily || '').trim(),
     active: req.body?.active !== false,
     sourceDefault: String(req.body?.sourceDefault || 'manual'),
     createdAt: FieldValue.serverTimestamp(),
@@ -943,6 +1101,13 @@ app.post('/api/courses', async (req, res) => {
   if (payload.validityMonths != null && Number.isNaN(payload.validityMonths)) {
     res.status(400).json({ error: 'validityMonths must be a number.' });
     return;
+  }
+  if (req.body?.level !== undefined && req.body?.level !== null && req.body?.level !== '') {
+    if (!parseCourseLevel(req.body.level)) {
+      res.status(400).json({ error: 'level must be 1, 2, or 3.' });
+      return;
+    }
+    payload.level = parseCourseLevel(req.body.level);
   }
 
   const ref = await db.collection('courses').add(payload);
@@ -962,10 +1127,18 @@ app.patch('/api/courses/:id', async (req, res) => {
   }
 
   const patch = { updatedAt: FieldValue.serverTimestamp() };
-  for (const key of ['code', 'title', 'category', 'description', 'sourceDefault']) {
+  for (const key of ['code', 'title', 'category', 'description', 'sourceDefault', 'tierFamily']) {
     if (req.body?.[key] !== undefined) patch[key] = String(req.body[key]).trim();
   }
   if (req.body?.active !== undefined) patch.active = Boolean(req.body.active);
+  if (req.body?.level !== undefined) {
+    const level = parseCourseLevel(req.body.level);
+    if (!level) {
+      res.status(400).json({ error: 'level must be 1, 2, or 3.' });
+      return;
+    }
+    patch.level = level;
+  }
   if (req.body?.validityMonths !== undefined) {
     patch.validityMonths = req.body.validityMonths === '' || req.body.validityMonths == null
       ? null
@@ -976,7 +1149,32 @@ app.patch('/api/courses/:id', async (req, res) => {
     }
   }
 
+  if (Object.prototype.hasOwnProperty.call(patch, 'title') && !patch.title) {
+    res.status(400).json({ error: 'title is required.' });
+    return;
+  }
+
   await ref.update(patch);
+
+  const existingData = existing.data() || {};
+  const completionPatch = {};
+  if (patch.title && patch.title !== (existingData.title || '')) {
+    completionPatch.courseTitle = patch.title;
+  }
+  if (patch.code !== undefined && patch.code !== (existingData.code || '')) {
+    completionPatch.courseCode = patch.code;
+  }
+  if (Object.keys(completionPatch).length) {
+    completionPatch.updatedAt = FieldValue.serverTimestamp();
+    const completionsSnap = await db.collection('completions').where('courseId', '==', req.params.id).get();
+    const docs = completionsSnap.docs;
+    for (let i = 0; i < docs.length; i += 400) {
+      const batch = db.batch();
+      docs.slice(i, i + 400).forEach((doc) => batch.update(doc.ref, completionPatch));
+      await batch.commit();
+    }
+  }
+
   const snap = await ref.get();
   res.json({ course: serializeCourse(snap) });
 });
@@ -1024,7 +1222,19 @@ app.get('/api/completions', async (req, res) => {
     snap = await db.collection('completions').orderBy('completedAt', 'desc').limit(300).get();
   }
 
-  let completions = snap.docs.map(serializeCompletion);
+  const courseIndex = await loadCourseTierIndex();
+  let completions = withCourseTiers(snap.docs.map(serializeCompletion), courseIndex);
+
+  if (canTrain(auth.role) && (!employeeUid || requestedUid)) {
+    const access = await loadAllowedEmployeeUids();
+    if (employeeUid && !hasDirectoryAccess(employeeUid, access.allowed)) {
+      res.status(404).json({ error: 'Employee not found.' });
+      return;
+    }
+    if (!employeeUid) {
+      completions = completions.filter((item) => hasDirectoryAccess(item.employeeUid, access.allowed));
+    }
+  }
 
   const q = String(req.query.q || '').trim().toLowerCase();
   if (q) {
@@ -1062,9 +1272,12 @@ app.get('/api/me/records', async (req, res) => {
     .limit(200)
     .get();
 
-  const links = await loadAssessmentLinksByCourseId();
+  const [links, courseIndex] = await Promise.all([
+    loadAssessmentLinksByCourseId(),
+    loadCourseTierIndex(),
+  ]);
   const completions = withAssessmentLinks(
-    snap.docs.map(serializeCompletion),
+    withCourseTiers(snap.docs.map(serializeCompletion), courseIndex),
     links,
     { forTrainer: canTrain(auth.role), employeeUid: auth.user.uid },
   );
@@ -1305,6 +1518,39 @@ app.patch('/api/completions/:id', async (req, res) => {
 });
 
 /**
+ * Admin: remove a course from an employee (deletes the completion / assignment).
+ */
+app.delete('/api/completions/:id', async (req, res) => {
+  const auth = await requireUser(req, res, 'admin');
+  if (!auth) return;
+
+  const ref = db.collection('completions').doc(req.params.id);
+  const snap = await ref.get();
+  if (!snap.exists) {
+    res.status(404).json({ error: 'Completion not found.' });
+    return;
+  }
+
+  try {
+    const completion = serializeCompletion(snap);
+    await ref.delete();
+    await saveCourseExclusion(completion, auth.user);
+    console.info('completion deleted', {
+      id: completion.id,
+      employeeUid: completion.employeeUid,
+      employeeName: completion.employeeName,
+      courseTitle: completion.courseTitle,
+      actorUid: auth.user.uid,
+      actorName: auth.user.fullName || auth.user.email,
+    });
+    res.json({ ok: true, id: completion.id, completion });
+  } catch (error) {
+    console.error('delete completion failed', error);
+    res.status(500).json({ error: error.message || 'Failed to remove course.' });
+  }
+});
+
+/**
  * Trainer+: required training log — expired + due within 30 days,
  * sorted most overdue first (expiresAt ascending).
  */
@@ -1318,23 +1564,33 @@ app.get('/api/required-training', async (req, res) => {
     const now = Date.now();
     const until = now + EXPIRING_SOON_MS;
 
-    const [completionsSnap, profilesSnap] = await Promise.all([
+    const [completionsSnap, coursesSnap, access] = await Promise.all([
       db.collection('completions').get(),
-      db.collection('employee_profiles').get(),
+      db.collection('courses').get(),
+      loadDirectoryAccess(),
     ]);
+    const courseIndex = courseIndexFromSnap(coursesSnap);
+    const allowedUids = access.allowedUids;
+    const profilesSnap = access.profilesSnap;
 
     const profilesByUid = new Map(
-      profilesSnap.docs.map((doc) => [doc.id, serializeEmployeeProfile(doc)]),
+      profilesSnap.docs
+        .map((doc) => serializeEmployeeProfile(doc))
+        .filter((profile) => hasDirectoryAccess(profile.employeeUid, allowedUids, profile))
+        .map((profile) => [profile.employeeUid, profile]),
     );
 
-    let rows = completionsSnap.docs.map((doc) => {
-      const item = serializeCompletion(doc);
+    let rows = withCourseTiers(
+      completionsSnap.docs.map(serializeCompletion),
+      courseIndex,
+    ).map((item) => {
       const profile = profilesByUid.get(item.employeeUid) || {};
       return {
         ...item,
         department: profile.department || '',
       };
     }).filter((item) => {
+      if (!hasDirectoryAccess(item.employeeUid, allowedUids, profilesByUid.get(item.employeeUid))) return false;
       if (item.status === 'failed') return true;
       if (!item.expiresAt) return false;
       const expires = new Date(item.expiresAt).getTime();
@@ -1435,6 +1691,7 @@ app.post('/api/completions/:id/certificate', async (req, res) => {
     employeeUid: data.employeeUid,
     employeeName: data.employeeName,
     employeeEmail: data.employeeEmail,
+    courseId: data.courseId || '',
     courseTitle: data.courseTitle,
     completedAt: data.completedAt?.toDate?.() || new Date(),
     expiresAt: data.expiresAt?.toDate?.() || null,
@@ -1460,9 +1717,16 @@ app.get('/api/dashboard', async (req, res) => {
   if (!auth) return;
 
   const now = Date.now();
-  const completionsSnap = await db.collection('completions').get();
-  const coursesSnap = await db.collection('courses').get();
-  const completions = completionsSnap.docs.map(serializeCompletion);
+  const [completionsSnap, coursesSnap, access] = await Promise.all([
+    db.collection('completions').get(),
+    db.collection('courses').get(),
+    loadAllowedEmployeeUids(),
+  ]);
+  const completions = withCourseTiers(
+    completionsSnap.docs.map(serializeCompletion),
+    courseIndexFromSnap(coursesSnap),
+    now,
+  ).filter((item) => hasDirectoryAccess(item.employeeUid, access.allowed));
   completions.sort((a, b) => String(b.completedAt || '').localeCompare(String(a.completedAt || '')));
 
   res.json({
@@ -1499,16 +1763,23 @@ app.get('/api/employees', async (req, res) => {
     const department = String(req.query.department || '').trim().toLowerCase();
     const statusFilter = String(req.query.status || '').trim().toLowerCase();
 
-    const [profilesSnap, completionsSnap] = await Promise.all([
+    const [profilesSnap, completionsSnap, coursesSnap, access] = await Promise.all([
       db.collection('employee_profiles').get(),
       db.collection('completions').get(),
+      db.collection('courses').get(),
+      loadDirectoryAccess(),
     ]);
+    const allowedUids = access.allowedUids;
 
-    const completions = completionsSnap.docs.map(serializeCompletion);
+    const completions = withCourseTiers(
+      completionsSnap.docs.map(serializeCompletion),
+      courseIndexFromSnap(coursesSnap),
+    );
     const byUid = new Map();
 
     profilesSnap.docs.forEach((doc) => {
       const profile = serializeEmployeeProfile(doc);
+      if (!hasDirectoryAccess(profile.employeeUid, allowedUids, profile)) return;
       byUid.set(profile.employeeUid, {
         ...profile,
         completions: [],
@@ -1517,6 +1788,7 @@ app.get('/api/employees', async (req, res) => {
 
     completions.forEach((item) => {
       if (!item.employeeUid) return;
+      if (!hasDirectoryAccess(item.employeeUid, allowedUids, byUid.get(item.employeeUid))) return;
       if (!byUid.has(item.employeeUid)) {
         byUid.set(item.employeeUid, {
           employeeUid: item.employeeUid,
@@ -1608,15 +1880,22 @@ app.get('/api/employees/:uid', async (req, res) => {
   }
 
   try {
-    const [profile, completionsSnap] = await Promise.all([
+    const [profile, completionsSnap, courseIndex, access] = await Promise.all([
       loadEmployeeProfile(uid),
       db.collection('completions').where('employeeUid', '==', uid).get(),
+      loadCourseTierIndex(),
+      loadAllowedEmployeeUids(),
     ]);
+    if (!hasDirectoryAccess(uid, access.allowed, profile)) {
+      res.status(404).json({ error: 'Employee not found.' });
+      return;
+    }
 
     const completions = withAssessmentLinks(
-      completionsSnap.docs
-        .map(serializeCompletion)
-        .sort((a, b) => String(b.completedAt || b.expiresAt || '').localeCompare(String(a.completedAt || a.expiresAt || ''))),
+      withCourseTiers(
+        completionsSnap.docs.map(serializeCompletion),
+        courseIndex,
+      ).sort((a, b) => String(b.completedAt || b.expiresAt || '').localeCompare(String(a.completedAt || a.expiresAt || ''))),
       await loadAssessmentLinksByCourseId(),
       { forTrainer: true, employeeUid: uid },
     );
@@ -1662,21 +1941,30 @@ app.get('/api/matrix', async (req, res) => {
     const status = String(req.query.status || '').trim().toLowerCase();
     const courseType = String(req.query.courseType || '').trim().toLowerCase();
 
-    const [profilesSnap, completionsSnap, coursesSnap] = await Promise.all([
+    const [profilesSnap, completionsSnap, coursesSnap, access] = await Promise.all([
       db.collection('employee_profiles').get(),
       db.collection('completions').get(),
       db.collection('courses').get(),
+      loadDirectoryAccess(),
     ]);
+    const allowedUids = access.allowedUids;
 
     const profilesByUid = new Map(
-      profilesSnap.docs.map((doc) => [doc.id, serializeEmployeeProfile(doc)]),
+      profilesSnap.docs
+        .map((doc) => serializeEmployeeProfile(doc))
+        .filter((profile) => hasDirectoryAccess(profile.employeeUid, allowedUids, profile))
+        .map((profile) => [profile.employeeUid, profile]),
     );
+    const serializedCourses = coursesSnap.docs.map(serializeCourse);
     const coursesById = new Map(
-      coursesSnap.docs.map((doc) => [doc.id, serializeCourse(doc)]),
+      serializedCourses.map((course) => [course.id, course]),
     );
+    const courseIndex = buildCourseTierIndex(serializedCourses);
 
-    let rows = completionsSnap.docs.map((doc) => {
-      const item = serializeCompletion(doc);
+    let rows = withCourseTiers(
+      completionsSnap.docs.map(serializeCompletion),
+      courseIndex,
+    ).filter((item) => hasDirectoryAccess(item.employeeUid, allowedUids, profilesByUid.get(item.employeeUid))).map((item) => {
       const profile = profilesByUid.get(item.employeeUid) || {};
       const courseDoc = item.courseId ? coursesById.get(item.courseId) : null;
       return {
@@ -1690,6 +1978,7 @@ app.get('/api/matrix', async (req, res) => {
         courseCode: item.courseCode || courseDoc?.code || '',
         courseType: courseDoc?.category || '',
         validityMonths: courseDoc?.validityMonths ?? null,
+        courseLevel: item.courseLevel || courseDoc?.level || 1,
         completedAt: item.completedAt,
         dueDate: item.expiresAt,
         status: item.status,
@@ -1697,6 +1986,8 @@ app.get('/api/matrix', async (req, res) => {
         notes: item.notes || '',
         sharePointWebUrl: item.sharePointWebUrl || '',
         trainingFolderName: profile.trainingFolderName || '',
+        coveredByCourseTitle: item.coveredByCourseTitle || '',
+        coveredByLevel: item.coveredByLevel || null,
       };
     });
 
@@ -1801,6 +2092,8 @@ app.post('/api/provisionUser', async (req, res) => {
       employeeName: fullName,
       employeeEmail: email,
       role,
+      accessEnabled: true,
+      accessRevokedAt: FieldValue.delete(),
       trainingFolderName: folderMeta.folderName || folderName,
       trainingFolderWebUrl: folderMeta.webUrl || '',
       trainingFolderConfirmedAt: existing?.trainingFolderConfirmedAt || FieldValue.serverTimestamp(),
@@ -1817,19 +2110,51 @@ app.post('/api/provisionUser', async (req, res) => {
   }
 });
 
+/**
+ * Service deprovision from Employee Portal when training_app access is removed.
+ * Hides the person from trainer lists without deleting historical records.
+ */
+app.post('/api/deprovisionUser', async (req, res) => {
+  if (!requireProvisionSecret(req, res)) return;
+
+  const uid = String(req.body?.uid || '').trim();
+  if (!uid) {
+    res.status(400).json({ error: 'uid is required.' });
+    return;
+  }
+
+  try {
+    const existing = await loadEmployeeProfile(uid);
+    const profile = await markEmployeeAccess(uid, false, {
+      employeeName: String(req.body?.fullName || existing?.employeeName || '').trim() || existing?.employeeName || '',
+      employeeEmail: String(req.body?.email || existing?.employeeEmail || '').trim() || existing?.employeeEmail || '',
+    });
+    res.json({
+      ok: true,
+      profile: serializeEmployeeProfile(profile),
+    });
+  } catch (error) {
+    console.error('deprovisionUser failed', error);
+    res.status(500).json({ error: error.message || 'Failed to deprovision training user.' });
+  }
+});
+
 app.get('/api/admin/mappings', async (req, res) => {
   const auth = await requireUser(req, res, 'admin');
   if (!auth) return;
 
   try {
-    const [profilesSnap, folders] = await Promise.all([
+    const [profilesSnap, folders, access] = await Promise.all([
       db.collection('employee_profiles').get(),
       isSharePointConfigured(getSharePointConfig())
         ? listEmployeeFolders(getSharePointConfig())
         : Promise.resolve([]),
+      loadAllowedEmployeeUids(),
     ]);
 
-    const profiles = profilesSnap.docs.map(serializeEmployeeProfile);
+    const profiles = profilesSnap.docs
+      .map(serializeEmployeeProfile)
+      .filter((profile) => hasDirectoryAccess(profile.employeeUid, access.allowed, profile));
     const mappedFolderNames = new Set(profiles.map((p) => normalizeName(p.trainingFolderName)).filter(Boolean));
 
     res.json({
@@ -2252,6 +2577,7 @@ app.post('/api/admin/backfill-certificates', async (req, res) => {
           employeeUid: data.employeeUid,
           employeeName: data.employeeName || profile?.employeeName || '',
           employeeEmail: data.employeeEmail || profile?.employeeEmail || '',
+          courseId: data.courseId || '',
           courseTitle: data.courseTitle || 'Training',
           completedAt: data.completedAt?.toDate?.() || new Date(),
           expiresAt: data.expiresAt?.toDate?.() || null,
@@ -2326,7 +2652,7 @@ app.post('/api/admin/import-matrix', async (req, res) => {
       return;
     }
 
-    const portalUsers = await fetchPortalUsersForSync();
+    const portalUsers = (await fetchPortalUsersForSync()).filter(userHasTrainingAccess);
     const { matched, unmatched, ambiguous } = matchEmployeesToUsers(parsed.employees, portalUsers);
     const matchedByKey = new Map(matched.map((row) => [normalizeName(row.employeeName), row]));
 
@@ -2353,6 +2679,7 @@ app.post('/api/admin/import-matrix', async (req, res) => {
         };
         if (course.validityMonths != null) patch.validityMonths = course.validityMonths;
         if (!existing.code && course.code) patch.code = course.code;
+        if (existing.level == null) patch.level = 1;
         await db.collection('courses').doc(existing.id).set(patch, { merge: true });
         coursesUpdated += 1;
       } else {
@@ -2362,6 +2689,8 @@ app.post('/api/admin/import-matrix', async (req, res) => {
           category: course.category,
           description: 'Imported from Training Matrix',
           validityMonths: course.validityMonths,
+          level: 1,
+          tierFamily: '',
           active: true,
           sourceDefault: 'matrix',
           createdAt: FieldValue.serverTimestamp(),
@@ -2382,12 +2711,22 @@ app.post('/api/admin/import-matrix', async (req, res) => {
         department: row.department || '',
         matrixName: row.employeeName,
         trainingFolderName: folderName,
+        accessEnabled: true,
+        accessRevokedAt: FieldValue.delete(),
       });
     }
 
     let completionsCreated = 0;
     let completionsUpdated = 0;
     let completionsSkipped = 0;
+
+    const exclusionsSnap = await db.collection('course_exclusions').get();
+    const excludedKeys = new Set(
+      exclusionsSnap.docs.map((doc) => {
+        const data = doc.data() || {};
+        return `${data.employeeUid}::${normalizeName(data.courseTitle || '')}`;
+      }),
+    );
 
     for (const record of parsed.records) {
       const match = matchedByKey.get(record.employeeKey);
@@ -2401,8 +2740,14 @@ app.post('/api/admin/import-matrix', async (req, res) => {
       if (String(record.status).toLowerCase() === 'expired') status = 'expired';
       if (String(record.status).toLowerCase() === 'required') status = 'assigned';
 
+      const excluded = excludedKeys.has(`${match.user.uid}::${record.courseKey}`);
+
       // Required rows with no completion date stay as assigned.
       if (status === 'assigned' && !record.completedAt) {
+        if (excluded) {
+          completionsSkipped += 1;
+          continue;
+        }
         const existing = await findExistingIngest('matrix', record.sourceExternalId);
         const payload = {
           employeeUid: match.user.uid,
