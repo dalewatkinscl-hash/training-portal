@@ -33,7 +33,8 @@ const db = getFirestore();
 
 const PORTAL_KEY = 'training_app';
 const MASTER_USER_MGMT_URL = 'https://employee.countrylion.co.uk';
-const ROLE_LEVEL = { employee: 1, manager: 2, trainer: 2, admin: 3 };
+/** learner is accepted as an alias of employee (Employee Portal / Assessment naming). */
+const ROLE_LEVEL = { learner: 1, employee: 1, manager: 2, trainer: 2, admin: 3 };
 const SOURCE_LABELS = {
   manual: 'Training portal',
   assessment: 'Assessment portal',
@@ -121,11 +122,20 @@ async function verifySession(cookieHeader) {
 }
 
 function getRole(user) {
-  return user?.portalsAccess?.[PORTAL_KEY] || '';
+  const raw = user?.portalsAccess?.[PORTAL_KEY] || '';
+  return normalizeTrainingRole(raw);
+}
+
+function normalizeTrainingRole(role) {
+  const value = String(role || '').trim().toLowerCase();
+  if (!value) return '';
+  if (value === 'learner' || value === 'staff' || value === 'user') return 'employee';
+  if (ROLE_LEVEL[value]) return value;
+  return value;
 }
 
 function roleAtLeast(role, minRole) {
-  return (ROLE_LEVEL[role] || 0) >= (ROLE_LEVEL[minRole] || 99);
+  return (ROLE_LEVEL[normalizeTrainingRole(role)] || 0) >= (ROLE_LEVEL[normalizeTrainingRole(minRole)] || 99);
 }
 
 function requireProvisionSecret(req, res) {
@@ -154,10 +164,15 @@ async function upsertEmployeeProfile(employeeUid, patch = {}) {
   };
   if (!existing.exists) {
     payload.createdAt = FieldValue.serverTimestamp();
-    await ref.set(payload);
-  } else {
-    await ref.set(payload, { merge: true });
+    // FieldValue.delete() is only valid with merge/update — drop on first create.
+    Object.keys(payload).forEach((key) => {
+      const value = payload[key];
+      if (value && typeof value === 'object' && value._methodName === 'FieldValue.delete') {
+        delete payload[key];
+      }
+    });
   }
+  await ref.set(payload, { merge: true });
   const snap = await ref.get();
   return { id: snap.id, ...snap.data() };
 }
@@ -214,18 +229,53 @@ async function loadAllowedEmployeeUids() {
       throw Object.assign(new Error('Employee Portal returned no training users.'), { status: 502 });
     }
     const allowed = new Set();
+    const allowedUsers = [];
     users.forEach((user) => {
       const uid = portalUserUid(user);
-      if (uid && userHasTrainingAccess(user)) allowed.add(uid);
+      if (uid && userHasTrainingAccess(user)) {
+        allowed.add(uid);
+        allowedUsers.push(user);
+      }
     });
     if (!allowed.size) {
       throw Object.assign(new Error('Employee Portal returned no users with training access.'), { status: 502 });
     }
-    return { source: 'portal', allowed };
+    return { source: 'portal', allowed, users: allowedUsers };
   } catch (error) {
     console.warn('portal access sync failed', error.message || error);
-    return { source: 'profiles', allowed: null };
+    return { source: 'profiles', allowed: null, users: [] };
   }
+}
+
+/**
+ * Create local employee_profiles for anyone with training_app access who is missing one.
+ * Fixes cases where provision failed (e.g. SharePoint) so trainers still see new staff.
+ */
+async function ensureProfilesForPortalUsers(allowedUsers = []) {
+  if (!Array.isArray(allowedUsers) || !allowedUsers.length) return 0;
+  const snap = await db.collection('employee_profiles').get();
+  const existing = new Set(snap.docs.map((doc) => doc.id));
+  const jobs = [];
+
+  for (const user of allowedUsers) {
+    const uid = portalUserUid(user);
+    if (!uid || existing.has(uid)) continue;
+    const fullName = String(user.fullName || '').trim();
+    if (!fullName) continue;
+    const role = normalizeTrainingRole(user.trainingRole || 'employee') || 'employee';
+    jobs.push(upsertEmployeeProfile(uid, {
+      employeeName: fullName,
+      employeeEmail: String(user.email || '').trim(),
+      role,
+      accessEnabled: true,
+      accessRevokedAt: FieldValue.delete(),
+      trainingFolderName: buildEmployeeFolderName(fullName),
+    }));
+  }
+
+  if (!jobs.length) return 0;
+  await Promise.all(jobs);
+  return jobs.length;
 }
 
 async function persistDirectoryAccessFlags(allowedUids, profilesSnap) {
@@ -244,11 +294,19 @@ async function persistDirectoryAccessFlags(allowedUids, profilesSnap) {
 }
 
 async function loadDirectoryAccess(profilesSnap = null) {
-  const [snap, access] = await Promise.all([
-    profilesSnap ? Promise.resolve(profilesSnap) : db.collection('employee_profiles').get(),
-    loadAllowedEmployeeUids(),
-  ]);
-  if (access.source === 'portal') {
+  const access = await loadAllowedEmployeeUids();
+  if (access.source === 'portal' && access.users?.length) {
+    try {
+      await ensureProfilesForPortalUsers(access.users);
+    } catch (error) {
+      console.warn('ensureProfilesForPortalUsers failed', error.message || error);
+    }
+  }
+
+  const snap = profilesSnap
+    || await db.collection('employee_profiles').get();
+
+  if (access.source === 'portal' && access.allowed) {
     persistDirectoryAccessFlags(access.allowed, snap).catch((error) => {
       console.warn('access flag sync failed', error.message || error);
     });
@@ -2064,7 +2122,7 @@ app.post('/api/provisionUser', async (req, res) => {
   const uid = String(req.body?.uid || '').trim();
   const fullName = String(req.body?.fullName || '').trim();
   const email = String(req.body?.email || '').trim();
-  const role = String(req.body?.role || 'employee').trim();
+  const role = normalizeTrainingRole(req.body?.role || 'employee') || 'employee';
 
   if (!uid || !fullName) {
     res.status(400).json({ error: 'uid and fullName are required.' });
@@ -2079,13 +2137,20 @@ app.post('/api/provisionUser', async (req, res) => {
       folderPath: folderName,
       webUrl: existing?.trainingFolderWebUrl || '',
     };
+    let sharePointWarning = '';
 
     const sharePointConfig = getSharePointConfig();
     if (isSharePointConfigured(sharePointConfig)) {
-      folderMeta = await ensureEmployeeFolder(sharePointConfig, {
-        fullName,
-        trainingFolderName: folderName,
-      });
+      try {
+        folderMeta = await ensureEmployeeFolder(sharePointConfig, {
+          fullName,
+          trainingFolderName: folderName,
+        });
+      } catch (sharePointError) {
+        // Never block local profile creation on SharePoint — trainers need the user visible.
+        sharePointWarning = sharePointError.message || 'SharePoint folder creation failed.';
+        console.warn('provisionUser SharePoint failed (continuing)', uid, sharePointWarning);
+      }
     }
 
     const profile = await upsertEmployeeProfile(uid, {
@@ -2095,7 +2160,7 @@ app.post('/api/provisionUser', async (req, res) => {
       accessEnabled: true,
       accessRevokedAt: FieldValue.delete(),
       trainingFolderName: folderMeta.folderName || folderName,
-      trainingFolderWebUrl: folderMeta.webUrl || '',
+      trainingFolderWebUrl: folderMeta.webUrl || existing?.trainingFolderWebUrl || '',
       trainingFolderConfirmedAt: existing?.trainingFolderConfirmedAt || FieldValue.serverTimestamp(),
     });
 
@@ -2103,6 +2168,7 @@ app.post('/api/provisionUser', async (req, res) => {
       ok: true,
       profile: serializeEmployeeProfile(profile),
       folder: folderMeta,
+      ...(sharePointWarning ? { sharePointWarning } : {}),
     });
   } catch (error) {
     console.error('provisionUser failed', error);
