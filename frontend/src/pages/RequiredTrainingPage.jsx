@@ -77,9 +77,10 @@ export default function RequiredTrainingPage() {
       </div>
 
       {totals && (
-        <div className="grid grid-cols-3 gap-3 max-w-xl">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 max-w-3xl">
           {[
             [t('stats.total'), totals.total],
+            [t('stats.required'), totals.assigned],
             [t('stats.expired'), totals.expired],
             [t('stats.expiringSoon'), totals.expiringSoon],
             [t('stats.failed'), totals.failed],
@@ -150,9 +151,11 @@ export default function RequiredTrainingPage() {
                 rows.map((item) => (
                   <tr key={item.id} className="border-b border-cl-border/60 last:border-0 hover:bg-white/[0.02]">
                     <td className={`px-3 py-2.5 whitespace-nowrap font-medium ${
-                      item.status === 'expired' ? 'text-rose-300' : 'text-amber-200'
+                      item.status === 'expired' ? 'text-rose-300'
+                        : item.status === 'assigned' ? 'text-sky-200'
+                          : 'text-amber-200'
                     }`}>
-                      {formatDate(item.expiresAt)}
+                      {item.expiresAt ? formatDate(item.expiresAt) : t('status.required')}
                     </td>
                     <td className="px-3 py-2.5 whitespace-nowrap">
                       {item.employeeUid ? (

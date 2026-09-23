@@ -461,6 +461,7 @@ function serializeCompletion(doc) {
     sourceExternalId: data.sourceExternalId || '',
     score: data.score ?? null,
     notes: data.notes || '',
+    quizId: data.quizId || '',
     certificateFileName: data.certificateFileName || '',
     sharePointWebUrl: data.sharePointWebUrl || '',
     sharePointItemId: data.sharePointItemId || '',
@@ -564,6 +565,52 @@ function extractQuizId(payload = {}) {
   const code = String(payload.courseCode || '').trim();
   const match = /^ASSESS-(.+)$/i.exec(code);
   return match ? String(match[1]).trim() : '';
+}
+
+function isAssignOnlyPayload(payload = {}) {
+  if (payload.assign === true) return true;
+  const status = String(payload.status || '').trim().toLowerCase();
+  return status === 'assigned' || status === 'required';
+}
+
+async function loadQuizIdForCourse(courseId, courseTitle) {
+  if (!courseId && !courseTitle) return '';
+  const mapsSnap = await db.collection('assessment_course_maps').get();
+  const titleKey = normalizeName(courseTitle || '');
+  let titleMatch = '';
+  for (const doc of mapsSnap.docs) {
+    const data = doc.data() || {};
+    const quizId = String(data.quizId || doc.id || '').trim();
+    if (!quizId) continue;
+    if (courseId && String(data.courseId || '').trim() === String(courseId)) return quizId;
+    const mappedTitle = normalizeName(data.courseTitle || '');
+    const quizTitle = normalizeName(data.quizTitle || '');
+    if (!titleMatch && titleKey && (
+      mappedTitle === titleKey
+      || quizTitle === titleKey
+      || (mappedTitle && (titleKey.includes(mappedTitle) || mappedTitle.includes(titleKey)))
+      || (quizTitle && (titleKey.includes(quizTitle) || quizTitle.includes(titleKey)))
+    )) {
+      titleMatch = quizId;
+    }
+  }
+  return titleMatch;
+}
+
+function assessmentLinkFieldsFromMap(data = {}, quizId = '') {
+  const id = String(quizId || data.quizId || '').trim();
+  if (!id) return {};
+  const trainerLed = data.trainerLed === true;
+  const baseUrl = getAssessmentPortalUrl().replace(/\/$/, '');
+  return {
+    assessmentQuizId: id,
+    assessmentQuizTitle: data.quizTitle || '',
+    trainerLed,
+    assessmentUrl: trainerLed ? null : `${baseUrl}/?quiz=${encodeURIComponent(id)}`,
+    conductAssessmentUrl: trainerLed
+      ? `${baseUrl}/?quiz=${encodeURIComponent(id)}&conduct=1`
+      : null,
+  };
 }
 
 async function loadAssessmentCourseMap(quizId) {
@@ -868,19 +915,8 @@ async function upsertCompletionRecord(payload, actor = {}) {
   const resolvedCode = courseCode || course?.code || '';
   const resolvedValidity = validityMonths ?? course?.validityMonths ?? null;
   const resolvedCourseId = courseId || course?.id || '';
+  const assignOnly = isAssignOnlyPayload(payload);
 
-  const completedDate = completedAt ? new Date(completedAt) : new Date();
-  if (Number.isNaN(completedDate.getTime())) {
-    throw Object.assign(new Error('Invalid completedAt.'), { status: 400 });
-  }
-
-  let expiryDate = expiresAt ? new Date(expiresAt) : computeExpiry(completedDate, resolvedValidity);
-  if (expiresAt && Number.isNaN(expiryDate.getTime())) {
-    throw Object.assign(new Error('Invalid expiresAt.'), { status: 400 });
-  }
-
-  const assessmentPassed = payload.passed;
-  const status = assessmentPassed === false ? 'failed' : computeStatus(expiryDate, completedDate);
   let existing = await findExistingIngest(source, sourceExternalId);
 
   // Assessment / CPC / manual classroom logs: update the employee's existing course row.
@@ -888,11 +924,47 @@ async function upsertCompletionRecord(payload, actor = {}) {
     existing = await findExistingCompletionForCourse(employeeUid, resolvedCourseId);
   }
 
+  if (assignOnly && existing) {
+    const existingCompleted = existing.data()?.completedAt;
+    if (existingCompleted) {
+      return { completion: serializeCompletion(existing), isNew: false, alreadyHeld: true };
+    }
+  }
+
+  let completedDate = null;
+  if (!assignOnly) {
+    completedDate = completedAt ? new Date(completedAt) : new Date();
+    if (Number.isNaN(completedDate.getTime())) {
+      throw Object.assign(new Error('Invalid completedAt.'), { status: 400 });
+    }
+  }
+
+  let expiryDate = null;
+  if (expiresAt) {
+    expiryDate = new Date(expiresAt);
+    if (Number.isNaN(expiryDate.getTime())) {
+      throw Object.assign(new Error('Invalid expiresAt.'), { status: 400 });
+    }
+  } else if (completedDate) {
+    expiryDate = computeExpiry(completedDate, resolvedValidity);
+  }
+
+  const assessmentPassed = payload.passed;
+  const status = assignOnly
+    ? 'assigned'
+    : (assessmentPassed === false ? 'failed' : computeStatus(expiryDate, completedDate));
+
   const profile = await loadEmployeeProfile(employeeUid);
   const resolvedFolderName = trainingFolderName
     || sharePointFolderName
     || profile?.trainingFolderName
     || '';
+
+  const resolvedQuizId = quizId
+    || extractQuizId(payload)
+    || await loadQuizIdForCourse(resolvedCourseId, resolvedTitle);
+
+  const shouldIssueCertificate = !assignOnly && status !== 'failed' && createCertificate !== false;
 
   const base = {
     employeeUid,
@@ -902,13 +974,13 @@ async function upsertCompletionRecord(payload, actor = {}) {
     courseCode: resolvedCode,
     courseTitle: resolvedTitle,
     status,
-    completedAt: Timestamp.fromDate(completedDate),
+    completedAt: completedDate ? Timestamp.fromDate(completedDate) : null,
     expiresAt: status === 'failed' ? null : (expiryDate ? Timestamp.fromDate(expiryDate) : null),
     source,
     sourceExternalId: sourceExternalId || '',
-    score,
+    score: assignOnly ? null : score,
     notes: notes || '',
-    quizId: quizId || extractQuizId(payload) || '',
+    quizId: resolvedQuizId,
     loggedByUid: actor.uid || source,
     loggedByName: actor.fullName || actor.email || SOURCE_LABELS[source] || source,
     updatedAt: FieldValue.serverTimestamp(),
@@ -932,7 +1004,7 @@ async function upsertCompletionRecord(payload, actor = {}) {
   }
 
   let certificateMeta = {};
-  if (createCertificate) {
+  if (shouldIssueCertificate) {
     certificateMeta = await maybeIssueCertificate({
       completionId: ref.id,
       employeeUid,
@@ -968,7 +1040,44 @@ async function upsertCompletionRecord(payload, actor = {}) {
 
   const snap = await ref.get();
   await clearCourseExclusion(employeeUid, resolvedTitle);
+
+  if (assignOnly && resolvedQuizId) {
+    await notifyAssessmentAssignment({
+      employeeUid,
+      employeeEmail: employeeEmail || profile?.employeeEmail || '',
+      quizId: resolvedQuizId,
+    });
+  }
+
   return { completion: serializeCompletion(snap), isNew };
+}
+
+async function notifyAssessmentAssignment({ employeeUid, employeeEmail, quizId }) {
+  const secret = getAssessmentProvisionSecret();
+  if (!secret || !quizId || !employeeUid) return { ok: false, skipped: true };
+  try {
+    const response = await fetch(`${getAssessmentPortalUrl()}/api/assignFromTraining`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-provision-secret': secret,
+      },
+      body: JSON.stringify({
+        employeeUid,
+        employeeEmail: employeeEmail || '',
+        quizIds: [quizId],
+      }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      console.warn('Assessment assignment sync failed', response.status, data);
+      return { ok: false, status: response.status, error: data.error || data };
+    }
+    return { ok: true, ...data };
+  } catch (error) {
+    console.warn('Assessment assignment sync failed', error);
+    return { ok: false, error: error.message || 'Assessment assignment sync failed' };
+  }
 }
 
 async function maybeIssueCertificate(options) {
@@ -1126,6 +1235,24 @@ app.get('/api/courses', async (req, res) => {
   const snap = await query.get();
   let courses = snap.docs.map(serializeCourse);
   if (activeOnly) courses = courses.filter((course) => course.active);
+
+  try {
+    const mapsSnap = await db.collection('assessment_course_maps').get();
+    const byCourseId = new Map();
+    mapsSnap.docs.forEach((doc) => {
+      const data = doc.data() || {};
+      const courseId = String(data.courseId || '').trim();
+      if (!courseId) return;
+      byCourseId.set(courseId, assessmentLinkFieldsFromMap(data, data.quizId || doc.id));
+    });
+    courses = courses.map((course) => {
+      const link = byCourseId.get(course.id);
+      return link ? { ...course, ...link } : course;
+    });
+  } catch (error) {
+    console.error('course assessment maps failed', error);
+  }
+
   res.json({ courses });
 });
 
@@ -1261,7 +1388,6 @@ app.get('/api/completions', async (req, res) => {
     snap = await db
       .collection('completions')
       .where('employeeUid', '==', employeeUid)
-      .orderBy('completedAt', 'desc')
       .limit(300)
       .get();
   } else if (status === 'expired' || status === 'completed' || status === 'expiring_soon') {
@@ -1316,6 +1442,9 @@ app.get('/api/completions', async (req, res) => {
     });
   }
 
+  completions.sort((a, b) =>
+    String(b.completedAt || b.expiresAt || '').localeCompare(String(a.completedAt || a.expiresAt || '')),
+  );
   res.json({ completions });
 });
 
@@ -1326,8 +1455,6 @@ app.get('/api/me/records', async (req, res) => {
   const snap = await db
     .collection('completions')
     .where('employeeUid', '==', auth.user.uid)
-    .orderBy('completedAt', 'desc')
-    .limit(200)
     .get();
 
   const [links, courseIndex] = await Promise.all([
@@ -1338,12 +1465,17 @@ app.get('/api/me/records', async (req, res) => {
     withCourseTiers(snap.docs.map(serializeCompletion), courseIndex),
     links,
     { forTrainer: canTrain(auth.role), employeeUid: auth.user.uid },
-  );
+  ).sort((a, b) => {
+    const aDate = a.completedAt || a.expiresAt || a.createdAt || '';
+    const bDate = b.completedAt || b.expiresAt || b.createdAt || '';
+    return String(bDate).localeCompare(String(aDate));
+  });
   const summary = {
     total: completions.length,
     valid: completions.filter((item) => item.status === 'completed').length,
     expired: completions.filter((item) => item.status === 'expired').length,
     expiringSoon: completions.filter((item) => item.status === 'expiring_soon').length,
+    assigned: completions.filter((item) => item.status === 'assigned').length,
     failed: completions.filter((item) => item.status === 'failed').length,
     renewViaAssessment: completions.filter((item) => item.assessmentUrl).length,
   };
@@ -1382,9 +1514,9 @@ app.post('/api/completions', async (req, res) => {
 });
 
 /**
- * Trainer: log one course for many people (classroom session).
- * Body: { courseId, completedAt, notes?, createCertificate?, employeeUids: string[] }
- *        or { ..., employees: [{ employeeUid, employeeName?, employeeEmail? }] }
+ * Trainer: log / assign one or more courses for many people.
+ * Body: { courseId | courseIds, completedAt?, notes?, createCertificate?, assign?,
+ *         employeeUids: string[] | employees: [{ employeeUid, employeeName?, employeeEmail? }] }
  */
 app.post('/api/completions/batch', async (req, res) => {
   const auth = await requireUser(req, res, 'trainer');
@@ -1392,14 +1524,37 @@ app.post('/api/completions/batch', async (req, res) => {
 
   try {
     const body = req.body || {};
-    const courseId = String(body.courseId || '').trim();
     const completedAt = body.completedAt;
     const notes = body.notes || '';
-    const createCertificate = body.createCertificate !== false;
+    const assign = body.assign === true || String(body.status || '').toLowerCase() === 'assigned';
+    const createCertificate = assign ? false : body.createCertificate !== false;
     const source = body.source || 'manual';
 
-    if (!courseId) {
-      res.status(400).json({ error: 'courseId is required.' });
+    const courseIdList = [];
+    if (Array.isArray(body.courseIds) && body.courseIds.length) {
+      body.courseIds.forEach((id) => {
+        const trimmed = String(id || '').trim();
+        if (trimmed) courseIdList.push(trimmed);
+      });
+    } else if (body.courseId) {
+      const trimmed = String(body.courseId || '').trim();
+      if (trimmed) courseIdList.push(trimmed);
+    }
+
+    // De-dupe course ids while preserving order.
+    const seenCourses = new Set();
+    const uniqueCourseIds = courseIdList.filter((id) => {
+      if (seenCourses.has(id)) return false;
+      seenCourses.add(id);
+      return true;
+    });
+
+    if (!uniqueCourseIds.length) {
+      res.status(400).json({ error: 'Select at least one course.' });
+      return;
+    }
+    if (uniqueCourseIds.length > 50) {
+      res.status(400).json({ error: 'Batch limited to 50 courses at a time.' });
       return;
     }
 
@@ -1434,70 +1589,100 @@ app.post('/api/completions/batch', async (req, res) => {
       res.status(400).json({ error: 'Batch limited to 150 people at a time.' });
       return;
     }
-
-    const course = await loadCourse(courseId);
-    if (!course) {
-      res.status(404).json({ error: 'Course not found.' });
+    if (people.length * uniqueCourseIds.length > 500) {
+      res.status(400).json({ error: 'Batch limited to 500 course assignments at a time.' });
       return;
+    }
+
+    const courses = [];
+    for (const courseId of uniqueCourseIds) {
+      const course = await loadCourse(courseId);
+      if (!course) {
+        res.status(404).json({ error: `Course not found: ${courseId}` });
+        return;
+      }
+      courses.push(course);
     }
 
     const results = [];
     let created = 0;
     let updated = 0;
     let failed = 0;
+    let alreadyHeld = 0;
 
-    for (const person of people) {
-      try {
-        const result = await upsertCompletionRecord(
-          {
+    for (const course of courses) {
+      for (const person of people) {
+        try {
+          const result = await upsertCompletionRecord(
+            {
+              employeeUid: person.employeeUid,
+              employeeName: person.employeeName,
+              employeeEmail: person.employeeEmail,
+              courseId: course.id,
+              courseTitle: course.title,
+              courseCode: course.code,
+              completedAt: assign ? null : completedAt,
+              notes,
+              createCertificate,
+              assign,
+              source,
+            },
+            auth.user,
+          );
+          if (result.alreadyHeld) alreadyHeld += 1;
+          else if (result.isNew) created += 1;
+          else updated += 1;
+          results.push({
             employeeUid: person.employeeUid,
-            employeeName: person.employeeName,
-            employeeEmail: person.employeeEmail,
+            employeeName: result.completion?.employeeName || person.employeeName || '',
             courseId: course.id,
-            courseTitle: course.title,
-            courseCode: course.code,
-            completedAt,
-            notes,
-            createCertificate,
-            source,
-          },
-          auth.user,
-        );
-        if (result.isNew) created += 1;
-        else updated += 1;
-        results.push({
-          employeeUid: person.employeeUid,
-          employeeName: result.completion?.employeeName || person.employeeName || '',
-          ok: true,
-          isNew: result.isNew,
-          completionId: result.completion?.id || '',
-          sharePointWebUrl: result.completion?.sharePointWebUrl || '',
-          certificatePendingSharePoint: !!result.completion?.certificatePendingSharePoint,
-        });
-      } catch (error) {
-        failed += 1;
-        console.error('batch completion failed', person.employeeUid, error);
-        results.push({
-          employeeUid: person.employeeUid,
-          employeeName: person.employeeName || '',
-          ok: false,
-          error: error.message || 'Failed to save completion.',
-        });
+            courseTitle: course.title || '',
+            ok: true,
+            isNew: result.isNew,
+            completionId: result.completion?.id || '',
+            sharePointWebUrl: result.completion?.sharePointWebUrl || '',
+            certificatePendingSharePoint: !!result.completion?.certificatePendingSharePoint,
+            alreadyHeld: !!result.alreadyHeld,
+            status: result.completion?.status || '',
+          });
+        } catch (error) {
+          failed += 1;
+          console.error('batch completion failed', person.employeeUid, course.id, error);
+          results.push({
+            employeeUid: person.employeeUid,
+            employeeName: person.employeeName || '',
+            courseId: course.id,
+            courseTitle: course.title || '',
+            ok: false,
+            error: error.message || 'Failed to save completion.',
+          });
+        }
       }
     }
 
-    res.status(failed && failed === people.length ? 500 : 200).json({
-      course: {
+    const primaryCourse = courses[0];
+    res.status(failed && failed === results.length ? 500 : 200).json({
+      course: primaryCourse
+        ? {
+            id: primaryCourse.id,
+            title: primaryCourse.title,
+            code: primaryCourse.code,
+          }
+        : null,
+      courses: courses.map((course) => ({
         id: course.id,
         title: course.title,
         code: course.code,
-      },
+      })),
       totals: {
-        requested: people.length,
+        requested: results.length,
+        people: people.length,
+        courses: courses.length,
         created,
         updated,
         failed,
-        certificates: results.filter((row) => row.ok).length,
+        alreadyHeld,
+        certificates: assign ? 0 : results.filter((row) => row.ok && !row.alreadyHeld).length,
       },
       results,
     });
@@ -1609,8 +1794,8 @@ app.delete('/api/completions/:id', async (req, res) => {
 });
 
 /**
- * Trainer+: required training log — expired + due within 30 days,
- * sorted most overdue first (expiresAt ascending).
+ * Trainer+: required training log — assigned, expired, due within 30 days, failed,
+ * sorted most overdue first (expiresAt ascending; assigned with no date first).
  */
 app.get('/api/required-training', async (req, res) => {
   const auth = await requireUser(req, res, 'trainer');
@@ -1649,7 +1834,7 @@ app.get('/api/required-training', async (req, res) => {
       };
     }).filter((item) => {
       if (!hasDirectoryAccess(item.employeeUid, allowedUids, profilesByUid.get(item.employeeUid))) return false;
-      if (item.status === 'failed') return true;
+      if (item.status === 'failed' || item.status === 'assigned') return true;
       if (!item.expiresAt) return false;
       const expires = new Date(item.expiresAt).getTime();
       if (!Number.isFinite(expires)) return false;
@@ -1667,8 +1852,8 @@ app.get('/api/required-training', async (req, res) => {
     }
 
     rows.sort((a, b) => {
-      const aExp = new Date(a.expiresAt).getTime();
-      const bExp = new Date(b.expiresAt).getTime();
+      const aExp = a.expiresAt ? new Date(a.expiresAt).getTime() : 0;
+      const bExp = b.expiresAt ? new Date(b.expiresAt).getTime() : 0;
       if (aExp !== bExp) return aExp - bExp;
       return String(a.employeeName || '').localeCompare(String(b.employeeName || ''));
     });
@@ -1687,6 +1872,7 @@ app.get('/api/required-training', async (req, res) => {
         total: rows.length,
         expired: rows.filter((row) => row.status === 'expired').length,
         expiringSoon: rows.filter((row) => row.status === 'expiring_soon').length,
+        assigned: rows.filter((row) => row.status === 'assigned').length,
         failed: rows.filter((row) => row.status === 'failed').length,
       },
     });
@@ -1728,6 +1914,71 @@ app.post('/api/ingest/completion', async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(error.status || 500).json({ error: error.message || 'Ingest failed.' });
+  }
+});
+
+/**
+ * Service: Assessment portal pulls a staff member's training records
+ * (assigned / expired / valid) including linked quiz ids.
+ * Header: x-ingest-secret: <TRAINING_INGEST_SECRET>
+ */
+app.get('/api/ingest/records', async (req, res) => {
+  const secret = getIngestSecret();
+  if (!secret || req.headers['x-ingest-secret'] !== secret) {
+    res.status(401).json({ error: 'Invalid ingest secret.' });
+    return;
+  }
+
+  try {
+    let employeeUid = String(req.query.employeeUid || req.query.uid || '').trim();
+    const employeeEmail = String(req.query.employeeEmail || req.query.email || '').trim().toLowerCase();
+    if (!employeeUid && employeeEmail) {
+      const profilesSnap = await db.collection('employee_profiles').get();
+      const match = profilesSnap.docs.find((doc) => (
+        String(doc.data()?.employeeEmail || '').trim().toLowerCase() === employeeEmail
+      ));
+      employeeUid = match?.id || '';
+    }
+    if (!employeeUid) {
+      res.status(400).json({ error: 'employeeUid or employeeEmail is required.' });
+      return;
+    }
+
+    const [profile, completionsSnap, courseIndex, links] = await Promise.all([
+      loadEmployeeProfile(employeeUid),
+      db.collection('completions').where('employeeUid', '==', employeeUid).get(),
+      loadCourseTierIndex(),
+      loadAssessmentLinksByCourseId(),
+    ]);
+
+    const completions = withAssessmentLinks(
+      withCourseTiers(completionsSnap.docs.map(serializeCompletion), courseIndex),
+      links,
+      { employeeUid },
+    ).sort((a, b) => String(b.completedAt || b.expiresAt || '').localeCompare(String(a.completedAt || a.expiresAt || '')));
+
+    const due = completions.filter((item) => (
+      item.status === 'assigned'
+      || item.status === 'expired'
+      || item.status === 'expiring_soon'
+      || item.status === 'failed'
+    ));
+
+    res.json({
+      employeeUid,
+      employee: {
+        uid: employeeUid,
+        employeeName: profile?.employeeName || completions[0]?.employeeName || '',
+        employeeEmail: profile?.employeeEmail || completions[0]?.employeeEmail || employeeEmail,
+      },
+      summary: summarizeEmployeeCompletions(completions),
+      records: completions,
+      due,
+      dueQuizIds: [...new Set(due.map((item) => item.assessmentQuizId || item.quizId).filter(Boolean))],
+    });
+  } catch (error) {
+    console.error('ingest records failed', error);
+    res.status(500).json({ error: error.message || 'Failed to load records.' });
   }
 });
 

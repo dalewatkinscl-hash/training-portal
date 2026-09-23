@@ -77,18 +77,27 @@ export default function EmployeeDetailPage({ canRemoveCourses = false }) {
               .join(' · ') || t('employee.trainingRecord')}
           </p>
         </div>
-        <Link
-          to={`/log?employeeUid=${encodeURIComponent(employee.employeeUid || uid)}&employeeName=${encodeURIComponent(employee.employeeName || '')}&employeeEmail=${encodeURIComponent(employee.employeeEmail || '')}`}
-          className="cl-btn-primary"
-        >
-          {t('nav.logCourse')}
-        </Link>
+        <div className="flex flex-wrap gap-2">
+          <Link
+            to={`/log?employeeUid=${encodeURIComponent(employee.employeeUid || uid)}&employeeName=${encodeURIComponent(employee.employeeName || '')}&employeeEmail=${encodeURIComponent(employee.employeeEmail || '')}`}
+            className="cl-btn-primary"
+          >
+            {t('nav.logCourse')}
+          </Link>
+          <Link
+            to={`/log?mode=assign&employeeUid=${encodeURIComponent(employee.employeeUid || uid)}&employeeName=${encodeURIComponent(employee.employeeName || '')}&employeeEmail=${encodeURIComponent(employee.employeeEmail || '')}`}
+            className="cl-btn-ghost"
+          >
+            {t('employee.assignCourse')}
+          </Link>
+        </div>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         {[
           [t('stats.total'), summary.total],
           [t('stats.valid'), summary.valid],
+          [t('stats.required'), summary.assigned],
           [t('stats.expiring30d'), summary.expiringSoon],
           [t('stats.expired'), summary.expired],
         ].map(([label, value]) => (

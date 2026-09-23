@@ -10,7 +10,7 @@ Master training records system for Country Lion. Hosted on Firebase, gated by Em
 ## What it does
 
 - Course catalogue with validity / expiry periods
-- Completion logging (manual)
+- Add course to people: **log completed** (certificate to SharePoint now) or **assign required** (shows in Training and Assessment until they pass)
 - Ingest API for **Assessment** and **CPC** portals
 - Certificate PDF generation
 - Upload certificates into each employee’s SharePoint **Training** folder (same HR site / Graph app as disciplinary docs)

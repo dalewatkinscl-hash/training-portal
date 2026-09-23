@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Clock3, GraduationCap } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Clock3, GraduationCap, ListChecks } from 'lucide-react';
 import { fetchMyRecords } from '../lib/api';
 import RecordsTable from '../components/RecordsTable';
 import { statusTone } from '../lib/training';
@@ -82,9 +82,10 @@ export default function MyRecordsPage() {
         </p>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         <Stat icon={GraduationCap} label={t('stats.total')} value={summary.total ?? 0} />
         <Stat icon={CheckCircle2} label={t('stats.valid')} value={summary.valid ?? 0} tone="good" />
+        <Stat icon={ListChecks} label={t('stats.required')} value={summary.assigned ?? 0} />
         <Stat icon={Clock3} label={t('stats.expiring30d')} value={summary.expiringSoon ?? 0} tone="warn" />
         <Stat icon={AlertTriangle} label={t('stats.expired')} value={summary.expired ?? 0} tone="bad" />
       </div>
@@ -107,7 +108,9 @@ export default function MyRecordsPage() {
                   <div className="font-medium text-cl-fg">{item.courseTitle}</div>
                   <div className="text-xs text-cl-muted mt-0.5 flex flex-wrap gap-2 items-center">
                     <span className={`cl-badge ${statusTone(item.status)}`}>{formatStatus(item.status)}</span>
-                    <span>{t('myRecords.dueOn', { date: formatDate(item.expiresAt) })}</span>
+                    {item.expiresAt ? (
+                      <span>{t('myRecords.dueOn', { date: formatDate(item.expiresAt) })}</span>
+                    ) : null}
                     {item.assessmentQuizTitle && (
                       <span>{t('myRecords.assessment', { title: item.assessmentQuizTitle })}</span>
                     )}
@@ -140,7 +143,9 @@ export default function MyRecordsPage() {
                   <div className="font-medium text-cl-fg">{item.courseTitle}</div>
                   <div className="text-xs text-cl-muted mt-0.5 flex flex-wrap gap-2 items-center">
                     <span className={`cl-badge ${statusTone(item.status)}`}>{formatStatus(item.status)}</span>
-                    <span>{t('myRecords.dueOn', { date: formatDate(item.expiresAt) })}</span>
+                    {item.expiresAt ? (
+                      <span>{t('myRecords.dueOn', { date: formatDate(item.expiresAt) })}</span>
+                    ) : null}
                     {item.assessmentQuizTitle && (
                       <span>{t('myRecords.assessment', { title: item.assessmentQuizTitle })}</span>
                     )}
@@ -171,7 +176,9 @@ export default function MyRecordsPage() {
                   <div className="font-medium text-cl-fg">{item.courseTitle}</div>
                   <div className="text-xs text-cl-muted mt-0.5 flex flex-wrap gap-2 items-center">
                     <span className={`cl-badge ${statusTone(item.status)}`}>{formatStatus(item.status)}</span>
-                    <span>{t('myRecords.dueOn', { date: formatDate(item.expiresAt) })}</span>
+                    {item.expiresAt ? (
+                      <span>{t('myRecords.dueOn', { date: formatDate(item.expiresAt) })}</span>
+                    ) : null}
                     {item.assessmentQuizTitle && (
                       <span>{t('myRecords.assessment', { title: item.assessmentQuizTitle })}</span>
                     )}

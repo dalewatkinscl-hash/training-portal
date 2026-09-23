@@ -71,7 +71,7 @@ export default function AppShell({ portalUser, role, onLogout, children }) {
                 {t('nav.catalogue')}
               </NavLink>
               <NavLink to="/log" className={linkClass}>
-                {t('nav.logCourse')}
+                {t('nav.addCourse')}
               </NavLink>
               <NavLink to="/required" className={linkClass}>
                 {t('nav.required')}
