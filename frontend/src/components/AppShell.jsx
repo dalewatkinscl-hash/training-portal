@@ -76,6 +76,9 @@ export default function AppShell({ portalUser, role, onLogout, children }) {
               <NavLink to="/required" className={linkClass}>
                 {t('nav.required')}
               </NavLink>
+              <NavLink to="/reports" className={linkClass}>
+                {t('nav.reports')}
+              </NavLink>
             </>
           )}
           {admin && (

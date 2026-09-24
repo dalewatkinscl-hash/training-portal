@@ -22,6 +22,8 @@ const {
 } = require('./matrixImport');
 const {
   parseCourseLevel,
+  inferCourseLevel,
+  deriveTierFamily,
   buildCourseTierIndex,
   applyCourseTierOverrides,
 } = require('./courseTiers');
@@ -1879,6 +1881,186 @@ app.get('/api/required-training', async (req, res) => {
   } catch (error) {
     console.error('required training failed', error);
     res.status(500).json({ error: error.message || 'Failed to load required training.' });
+  }
+});
+
+/**
+ * Trainer+: course completion report — who has / has not completed a selected course.
+ * Query: courseId (required), department?, q?
+ */
+app.get('/api/reports/course-completion', async (req, res) => {
+  const auth = await requireUser(req, res, 'trainer');
+  if (!auth) return;
+
+  try {
+    const courseId = String(req.query.courseId || '').trim();
+    if (!courseId) {
+      res.status(400).json({ error: 'courseId is required.' });
+      return;
+    }
+
+    const q = String(req.query.q || '').trim().toLowerCase();
+    const department = String(req.query.department || '').trim().toLowerCase();
+
+    const [courseSnap, coursesSnap, completionsSnap, access] = await Promise.all([
+      db.collection('courses').doc(courseId).get(),
+      db.collection('courses').get(),
+      db.collection('completions').get(),
+      loadDirectoryAccess(),
+    ]);
+
+    if (!courseSnap.exists) {
+      res.status(404).json({ error: 'Course not found.' });
+      return;
+    }
+
+    const course = serializeCourse(courseSnap);
+    const courseIndex = courseIndexFromSnap(coursesSnap);
+    const courseLevel = parseCourseLevel(course.level) || inferCourseLevel(course.title, course.level) || 1;
+    const courseFamily = deriveTierFamily(course.title, course.tierFamily);
+    const courseTitleKey = normalizeName(course.title || '');
+
+    const allowedUids = access.allowedUids;
+    const profilesByUid = new Map(
+      access.profilesSnap.docs
+        .map((doc) => serializeEmployeeProfile(doc))
+        .filter((profile) => hasDirectoryAccess(profile.employeeUid, allowedUids, profile))
+        .map((profile) => [profile.employeeUid, profile]),
+    );
+
+    const completions = withCourseTiers(
+      completionsSnap.docs.map(serializeCompletion),
+      courseIndex,
+    );
+
+    const completionsByUid = new Map();
+    completions.forEach((item) => {
+      if (!item.employeeUid) return;
+      if (!hasDirectoryAccess(item.employeeUid, allowedUids, profilesByUid.get(item.employeeUid))) return;
+      if (!completionsByUid.has(item.employeeUid)) completionsByUid.set(item.employeeUid, []);
+      completionsByUid.get(item.employeeUid).push(item);
+    });
+
+    // Include people with records but no profile still in the allowlist.
+    completionsByUid.forEach((_rows, uid) => {
+      if (profilesByUid.has(uid)) return;
+      if (!hasDirectoryAccess(uid, allowedUids)) return;
+      const sample = _rows[0] || {};
+      profilesByUid.set(uid, {
+        employeeUid: uid,
+        employeeName: sample.employeeName || 'Unknown',
+        employeeEmail: sample.employeeEmail || '',
+        department: '',
+        trainingFolderName: '',
+        trainingFolderWebUrl: '',
+      });
+    });
+
+    const matchesCourse = (item) => {
+      if (!item) return false;
+      if (item.courseId && item.courseId === course.id) return true;
+      if (courseTitleKey && normalizeName(item.courseTitle || '') === courseTitleKey) return true;
+      return false;
+    };
+
+    const isCurrentlyValid = (status) => status === 'completed' || status === 'expiring_soon';
+
+    const findCovering = (rows) => {
+      if (!courseFamily) return null;
+      let best = null;
+      for (const item of rows || []) {
+        const level = parseCourseLevel(item.courseLevel) || 1;
+        const family = item.tierFamily || deriveTierFamily(item.courseTitle || '', '');
+        if (family !== courseFamily || level <= courseLevel) continue;
+        if (!item.completedAt || item.status === 'failed') continue;
+        if (!isCurrentlyValid(item.status)) continue;
+        if (!best || (item.expiresAt || '') > (best.expiresAt || '')) best = item;
+      }
+      return best;
+    };
+
+    let completed = [];
+    let outstanding = [];
+
+    for (const profile of profilesByUid.values()) {
+      const uid = profile.employeeUid;
+      const rows = completionsByUid.get(uid) || [];
+      const direct = rows.find(matchesCourse) || null;
+      const covering = (!direct || !isCurrentlyValid(direct.status))
+        ? findCovering(rows)
+        : null;
+
+      let reportStatus = 'missing';
+      let completion = null;
+
+      if (direct && isCurrentlyValid(direct.status)) {
+        reportStatus = 'completed';
+        completion = direct;
+      } else if (covering) {
+        reportStatus = 'completed';
+        completion = {
+          ...covering,
+          coveredByCourseId: covering.courseId || '',
+          coveredByCourseTitle: covering.courseTitle || '',
+          coveredByLevel: covering.courseLevel || null,
+        };
+      } else if (direct) {
+        reportStatus = direct.status || 'outstanding';
+        completion = direct;
+      }
+
+      const row = {
+        employeeUid: uid,
+        employeeName: profile.employeeName || completion?.employeeName || '',
+        employeeEmail: profile.employeeEmail || completion?.employeeEmail || '',
+        department: profile.department || '',
+        reportStatus,
+        status: completion?.status || reportStatus,
+        completedAt: completion?.completedAt || null,
+        expiresAt: completion?.expiresAt || null,
+        source: completion?.source || '',
+        completionId: completion?.id || '',
+        coveredByCourseTitle: completion?.coveredByCourseTitle || '',
+        coveredByLevel: completion?.coveredByLevel || null,
+        sharePointWebUrl: completion?.sharePointWebUrl || '',
+      };
+
+      if (reportStatus === 'completed') completed.push(row);
+      else outstanding.push(row);
+    }
+
+    const matchesFilters = (row) => {
+      if (department && String(row.department || '').toLowerCase() !== department) return false;
+      if (q) {
+        const hay = `${row.employeeName} ${row.employeeEmail} ${row.department}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    };
+
+    completed = completed.filter(matchesFilters)
+      .sort((a, b) => String(a.employeeName || '').localeCompare(String(b.employeeName || '')));
+    outstanding = outstanding.filter(matchesFilters)
+      .sort((a, b) => String(a.employeeName || '').localeCompare(String(b.employeeName || '')));
+
+    const departments = [...new Set(
+      [...profilesByUid.values()].map((row) => row.department).filter(Boolean),
+    )].sort((a, b) => a.localeCompare(b));
+
+    res.json({
+      course,
+      departments,
+      completed,
+      outstanding,
+      totals: {
+        employees: completed.length + outstanding.length,
+        completed: completed.length,
+        outstanding: outstanding.length,
+      },
+    });
+  } catch (error) {
+    console.error('course completion report failed', error);
+    res.status(500).json({ error: error.message || 'Failed to load course completion report.' });
   }
 });
 

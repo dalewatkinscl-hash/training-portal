@@ -12,6 +12,7 @@ import AmendRecordsPage from './pages/AmendRecordsPage';
 import EmployeesPage from './pages/EmployeesPage';
 import EmployeeDetailPage from './pages/EmployeeDetailPage';
 import MatrixPage from './pages/MatrixPage';
+import ReportsPage from './pages/ReportsPage';
 import { EMPLOYEE_LOGIN_URL, PORTAL_KEY, canAdmin, canTrain, getRole } from './lib/training';
 import { fetchSession } from './lib/api';
 import { useI18n } from './i18n/LanguageProvider';
@@ -137,6 +138,14 @@ export default function App() {
             element={
               <Guard allow={trainer}>
                 <MatrixPage />
+              </Guard>
+            }
+          />
+          <Route
+            path="/reports"
+            element={
+              <Guard allow={trainer}>
+                <ReportsPage />
               </Guard>
             }
           />

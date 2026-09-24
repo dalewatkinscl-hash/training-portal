@@ -152,3 +152,10 @@ export function fetchFolderSuggestions(name) {
   const query = new URLSearchParams({ name }).toString();
   return api(`/api/admin/folder-suggestions?${query}`);
 }
+
+export function fetchCourseCompletionReport(params = {}) {
+  const query = new URLSearchParams(
+    Object.entries(params).filter(([, value]) => value != null && value !== ''),
+  ).toString();
+  return api(`/api/reports/course-completion${query ? `?${query}` : ''}`);
+}
