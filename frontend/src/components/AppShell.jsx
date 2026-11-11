@@ -13,7 +13,7 @@ const linkClass = ({ isActive }) =>
       : 'text-cl-muted hover:text-cl-fg hover:bg-white/[0.04] border border-transparent'
   }`;
 
-export default function AppShell({ portalUser, role, onLogout, children }) {
+export default function AppShell({ portalUser, role, canRequestTraining = false, onLogout, children }) {
   const trainer = canTrain(role);
   const admin = canAdmin(role);
   const { t } = useI18n();
@@ -56,6 +56,11 @@ export default function AppShell({ portalUser, role, onLogout, children }) {
           <NavLink to="/" end className={linkClass}>
             {t('nav.myRecords')}
           </NavLink>
+          {canRequestTraining && (
+            <NavLink to="/requests" className={linkClass}>
+              {t('nav.trainingRequest')}
+            </NavLink>
+          )}
           {trainer && (
             <>
               <NavLink to="/dashboard" className={linkClass}>

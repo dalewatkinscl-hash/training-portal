@@ -13,6 +13,7 @@ import EmployeesPage from './pages/EmployeesPage';
 import EmployeeDetailPage from './pages/EmployeeDetailPage';
 import MatrixPage from './pages/MatrixPage';
 import ReportsPage from './pages/ReportsPage';
+import TrainingRequestPage from './pages/TrainingRequestPage';
 import { EMPLOYEE_LOGIN_URL, PORTAL_KEY, canAdmin, canTrain, getRole } from './lib/training';
 import { fetchSession } from './lib/api';
 import { useI18n } from './i18n/LanguageProvider';
@@ -27,6 +28,7 @@ export default function App() {
   const { t } = useI18n();
   const [portalUser, setPortalUser] = useState(null);
   const [role, setRole] = useState('');
+  const [canRequestTraining, setCanRequestTraining] = useState(false);
   const [loading, setLoading] = useState(true);
   const [authError, setAuthError] = useState('');
 
@@ -44,6 +46,7 @@ export default function App() {
         if (!cancelled) {
           setPortalUser(response.user || null);
           setRole(response.role || getRole(response.user));
+          setCanRequestTraining(Boolean(response.canRequestTraining));
         }
       } catch (error) {
         console.error(error);
@@ -106,9 +109,22 @@ export default function App() {
 
   return (
     <BrowserRouter>
-      <AppShell portalUser={portalUser} role={role} onLogout={handleLogout}>
+      <AppShell
+        portalUser={portalUser}
+        role={role}
+        canRequestTraining={canRequestTraining}
+        onLogout={handleLogout}
+      >
         <Routes>
           <Route path="/" element={<MyRecordsPage />} />
+          <Route
+            path="/requests"
+            element={
+              <Guard allow={canRequestTraining}>
+                <TrainingRequestPage />
+              </Guard>
+            }
+          />
           <Route
             path="/dashboard"
             element={

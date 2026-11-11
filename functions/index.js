@@ -368,6 +368,109 @@ function canAdmin(role) {
   return roleAtLeast(role, 'admin');
 }
 
+function jobTitleOf(user) {
+  return String(
+    user?.employeeProfile?.jobRole
+    || user?.jobRole
+    || user?.jobTitle
+    || '',
+  ).trim();
+}
+
+function normalizeJobTitle(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[_/,.-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Director, senior manager, or admin job titles (Employee Portal jobRole). */
+function isTrainingRequestorTitle(value) {
+  const title = normalizeJobTitle(value);
+  if (!title) return false;
+  if (/\bdirector\b/.test(title)) return true;
+  if (/\bsenior manager\b/.test(title)) return true;
+  if (title === 'admin' || title === 'administrator') return true;
+  if (/(^| )admin$/.test(title) || /(^| )administrator$/.test(title)) return true;
+  return false;
+}
+
+function canRequestTraining(user, role) {
+  if (normalizeTrainingRole(role) === 'admin') return true;
+  return isTrainingRequestorTitle(jobTitleOf(user));
+}
+
+async function requireTrainingRequestor(req, res) {
+  const auth = await requireUser(req, res, 'employee');
+  if (!auth) return null;
+  if (!canRequestTraining(auth.user, auth.role)) {
+    res.status(403).json({
+      error: 'Only directors, senior managers, and admins can use training requests.',
+    });
+    return null;
+  }
+  return auth;
+}
+
+function staffFromDirectory(access) {
+  const allowedUids = access?.allowedUids;
+  return (access?.profilesSnap?.docs || [])
+    .map((doc) => serializeEmployeeProfile(doc))
+    .filter((profile) => hasDirectoryAccess(profile.employeeUid, allowedUids, profile))
+    .filter((profile) => profile.employeeName || profile.employeeEmail)
+    .map((profile) => ({
+      employeeUid: profile.employeeUid,
+      employeeName: profile.employeeName || '',
+      employeeEmail: profile.employeeEmail || '',
+      department: profile.department || '',
+    }))
+    .sort((a, b) => String(a.employeeName || a.employeeEmail).localeCompare(
+      String(b.employeeName || b.employeeEmail),
+      'en',
+      { sensitivity: 'base' },
+    ));
+}
+
+function serializeRequestPerson(person) {
+  return {
+    employeeUid: String(person?.employeeUid || ''),
+    employeeName: String(person?.employeeName || ''),
+    employeeEmail: String(person?.employeeEmail || ''),
+    department: String(person?.department || ''),
+    completionId: String(person?.completionId || ''),
+    sharePointWebUrl: String(person?.sharePointWebUrl || ''),
+    certificateFileName: String(person?.certificateFileName || ''),
+    certificatePendingSharePoint: person?.certificatePendingSharePoint === true,
+    certificateError: String(person?.certificateError || ''),
+  };
+}
+
+function serializeTrainingRequest(doc) {
+  const data = doc.data() || {};
+  const priority = ['low', 'medium', 'high'].includes(data.priority) ? data.priority : 'medium';
+  return {
+    id: doc.id,
+    status: data.status === 'completed' ? 'completed' : 'open',
+    priority,
+    adHoc: data.adHoc === true,
+    courseId: data.courseId || '',
+    courseCode: data.courseCode || '',
+    courseTitle: data.courseTitle || '',
+    notes: data.notes || '',
+    people: Array.isArray(data.people) ? data.people.map(serializeRequestPerson) : [],
+    requestedByUid: data.requestedByUid || '',
+    requestedByName: data.requestedByName || '',
+    requestedByEmail: data.requestedByEmail || '',
+    requestedByJobTitle: data.requestedByJobTitle || '',
+    completedByUid: data.completedByUid || '',
+    completedByName: data.completedByName || '',
+    createdAt: toIso(data.createdAt),
+    updatedAt: toIso(data.updatedAt),
+    completedAt: toIso(data.completedAt),
+  };
+}
+
 function toIso(value) {
   if (!value) return null;
   if (typeof value?.toDate === 'function') return value.toDate().toISOString();
@@ -466,6 +569,7 @@ function serializeCompletion(doc) {
     quizId: data.quizId || '',
     certificateFileName: data.certificateFileName || '',
     sharePointWebUrl: data.sharePointWebUrl || '',
+    certificatePendingSharePoint: data.certificatePendingSharePoint === true,
     sharePointItemId: data.sharePointItemId || '',
     sharePointFolderPath: data.sharePointFolderPath || '',
     loggedByUid: data.loggedByUid || '',
@@ -1218,6 +1322,7 @@ app.get('/api/session', async (req, res) => {
   res.json({
     user: auth.user,
     role: auth.role,
+    canRequestTraining: canRequestTraining(auth.user, auth.role),
     portal: PORTAL_KEY,
     sharePointConfigured: isSharePointConfigured(getSharePointConfig()),
   });
@@ -3356,6 +3461,303 @@ app.post('/api/admin/import-matrix', async (req, res) => {
   } catch (error) {
     console.error('import-matrix failed', error);
     res.status(error.status || 500).json({ error: error.message || 'Import failed.' });
+  }
+});
+
+app.get('/api/training-requests/staff', async (req, res) => {
+  const auth = await requireTrainingRequestor(req, res);
+  if (!auth) return;
+
+  try {
+    const access = await loadDirectoryAccess();
+    res.json({ staff: staffFromDirectory(access) });
+  } catch (error) {
+    console.error('training request staff failed', error);
+    res.status(500).json({ error: error.message || 'Failed to load staff.' });
+  }
+});
+
+app.get('/api/training-requests', async (req, res) => {
+  const auth = await requireTrainingRequestor(req, res);
+  if (!auth) return;
+
+  try {
+    const snap = await db.collection('training_requests').get();
+    const requests = snap.docs
+      .map(serializeTrainingRequest)
+      .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+    res.json({ requests });
+  } catch (error) {
+    console.error('training requests list failed', error);
+    res.status(500).json({ error: error.message || 'Failed to load training requests.' });
+  }
+});
+
+app.post('/api/training-requests', async (req, res) => {
+  const auth = await requireTrainingRequestor(req, res);
+  if (!auth) return;
+
+  try {
+    const priority = String(req.body?.priority || 'medium').trim().toLowerCase();
+    if (!['low', 'medium', 'high'].includes(priority)) {
+      res.status(400).json({ error: 'Priority must be low, medium, or high.' });
+      return;
+    }
+
+    let courseId = String(req.body?.courseId || '').trim();
+    if (courseId === '__adhoc__') courseId = '';
+    const adHocTitle = String(req.body?.adHocTitle || '').trim();
+    const notes = String(req.body?.notes || '').trim();
+    if (notes.length > 2000) {
+      res.status(400).json({ error: 'Notes must be 2000 characters or fewer.' });
+      return;
+    }
+
+    const rawUids = Array.isArray(req.body?.employeeUids) ? req.body.employeeUids : [];
+    const employeeUids = [...new Set(
+      rawUids.map((uid) => String(uid || '').trim()).filter(Boolean),
+    )];
+    if (!employeeUids.length) {
+      res.status(400).json({ error: 'Select at least one member of staff.' });
+      return;
+    }
+    if (employeeUids.length > 200) {
+      res.status(400).json({ error: 'Select 200 staff or fewer.' });
+      return;
+    }
+
+    let courseTitle = '';
+    let courseCode = '';
+    let adHoc = false;
+    if (courseId) {
+      const course = await loadCourse(courseId);
+      if (!course || course.active === false) {
+        res.status(400).json({ error: 'That course is not in the catalogue.' });
+        return;
+      }
+      courseTitle = String(course.title || '').trim();
+      courseCode = String(course.code || '').trim();
+      if (!courseTitle) {
+        res.status(400).json({ error: 'That course is not in the catalogue.' });
+        return;
+      }
+    } else {
+      if (!adHocTitle) {
+        res.status(400).json({ error: 'Enter a name for training that is not in the catalogue.' });
+        return;
+      }
+      if (adHocTitle.length > 180) {
+        res.status(400).json({ error: 'Training name must be 180 characters or fewer.' });
+        return;
+      }
+      courseTitle = adHocTitle;
+      adHoc = true;
+      courseId = '';
+    }
+
+    const access = await loadDirectoryAccess();
+    const directory = new Map(
+      staffFromDirectory(access).map((person) => [person.employeeUid, person]),
+    );
+    const missing = employeeUids.filter((uid) => !directory.has(uid));
+    if (missing.length) {
+      res.status(400).json({ error: 'One or more selected staff could not be found.' });
+      return;
+    }
+
+    const actorName = auth.user.fullName || auth.user.email || '';
+    const payload = {
+      status: 'open',
+      priority,
+      adHoc,
+      courseId,
+      courseCode,
+      courseTitle,
+      notes,
+      people: employeeUids.map((uid) => directory.get(uid)),
+      requestedByUid: auth.user.uid || '',
+      requestedByName: actorName,
+      requestedByEmail: auth.user.email || '',
+      requestedByJobTitle: jobTitleOf(auth.user) || (normalizeTrainingRole(auth.role) === 'admin' ? 'Admin' : ''),
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    };
+
+    const ref = await db.collection('training_requests').add(payload);
+    const saved = await ref.get();
+    res.status(201).json({ request: serializeTrainingRequest(saved) });
+  } catch (error) {
+    console.error('training request create failed', error);
+    res.status(500).json({ error: error.message || 'Failed to create the training request.' });
+  }
+});
+
+app.post('/api/training-requests/:id/complete', async (req, res) => {
+  const auth = await requireTrainingRequestor(req, res);
+  if (!auth) return;
+
+  const id = String(req.params.id || '').trim();
+  if (!id || id.length > 200) {
+    res.status(400).json({ error: 'Request id is required.' });
+    return;
+  }
+
+  try {
+    const ref = db.collection('training_requests').doc(id);
+    const snap = await ref.get();
+    if (!snap.exists) {
+      res.status(404).json({ error: 'Training request not found.' });
+      return;
+    }
+
+    const data = snap.data() || {};
+    const people = Array.isArray(data.people) ? data.people : [];
+    if (!people.length) {
+      res.status(400).json({ error: 'This request has nobody to certificate.' });
+      return;
+    }
+
+    const alreadyCertificated = people.every((person) => String(person?.completionId || '').trim());
+    if (data.status === 'completed' && alreadyCertificated) {
+      res.json({ request: serializeTrainingRequest(snap) });
+      return;
+    }
+
+    const courseId = String(data.courseId || '').trim();
+    const courseTitle = String(data.courseTitle || '').trim();
+    const courseCode = String(data.courseCode || '').trim();
+    const notes = String(data.notes || '').trim();
+    const completedAt = new Date().toISOString();
+    const certificated = [];
+
+    for (const person of people) {
+      const employeeUid = String(person?.employeeUid || '').trim();
+      if (String(person?.completionId || '').trim()) {
+        certificated.push(serializeRequestPerson(person));
+        continue;
+      }
+      if (!employeeUid) {
+        certificated.push(serializeRequestPerson({
+          ...person,
+          certificateError: 'Missing staff record.',
+        }));
+        continue;
+      }
+
+      try {
+        const result = await upsertCompletionRecord(
+          {
+            employeeUid,
+            employeeName: person.employeeName || '',
+            employeeEmail: person.employeeEmail || '',
+            courseId,
+            courseCode,
+            courseTitle,
+            completedAt,
+            notes,
+            createCertificate: true,
+            source: 'manual',
+            sourceExternalId: `training-request:${id}:${employeeUid}`,
+          },
+          auth.user,
+        );
+        const completion = result.completion || {};
+        certificated.push(serializeRequestPerson({
+          ...person,
+          completionId: completion.id || '',
+          sharePointWebUrl: completion.sharePointWebUrl || '',
+          certificateFileName: completion.certificateFileName || '',
+          certificatePendingSharePoint: completion.certificatePendingSharePoint === true,
+          certificateError: '',
+        }));
+      } catch (error) {
+        console.error('training request certificate failed', id, employeeUid, error);
+        certificated.push(serializeRequestPerson({
+          ...person,
+          certificateError: error.message || 'Failed to issue the certificate.',
+        }));
+      }
+    }
+
+    const failed = certificated.filter((person) => !person.completionId);
+    const patch = {
+      people: certificated,
+      updatedAt: FieldValue.serverTimestamp(),
+    };
+    if (!failed.length) {
+      patch.status = 'completed';
+      if (data.status !== 'completed') {
+        patch.completedAt = FieldValue.serverTimestamp();
+        patch.completedByUid = auth.user.uid || '';
+        patch.completedByName = auth.user.fullName || auth.user.email || '';
+      }
+    }
+    await ref.set(patch, { merge: true });
+    const updated = await ref.get();
+
+    if (failed.length) {
+      const names = failed.map((person) => person.employeeName || person.employeeEmail || person.employeeUid).join(', ');
+      res.status(500).json({
+        error: `Certificate was not issued for ${names}.`,
+        request: serializeTrainingRequest(updated),
+      });
+      return;
+    }
+
+    res.json({ request: serializeTrainingRequest(updated) });
+  } catch (error) {
+    console.error('training request complete failed', error);
+    res.status(500).json({ error: error.message || 'Failed to complete the training request.' });
+  }
+});
+
+app.delete('/api/training-requests/:id', async (req, res) => {
+  const auth = await requireTrainingRequestor(req, res);
+  if (!auth) return;
+
+  const id = String(req.params.id || '').trim();
+  if (!id || id.length > 200) {
+    res.status(400).json({ error: 'Request id is required.' });
+    return;
+  }
+
+  try {
+    const ref = db.collection('training_requests').doc(id);
+    const snap = await ref.get();
+    if (!snap.exists) {
+      res.status(404).json({ error: 'Training request not found.' });
+      return;
+    }
+
+    const employeeUid = String(req.query.employeeUid || '').trim();
+    const people = Array.isArray(snap.data()?.people) ? snap.data().people : [];
+    if (employeeUid) {
+      const remaining = people.filter((person) => String(person?.employeeUid || '') !== employeeUid);
+      if (remaining.length === people.length) {
+        res.status(404).json({ error: 'That person is not on this request.' });
+        return;
+      }
+      if (remaining.length) {
+        await ref.set({
+          people: remaining,
+          updatedAt: FieldValue.serverTimestamp(),
+        }, { merge: true });
+        const updated = await ref.get();
+        res.json({
+          ok: true,
+          id,
+          removed: 'person',
+          request: serializeTrainingRequest(updated),
+        });
+        return;
+      }
+    }
+
+    await ref.delete();
+    res.json({ ok: true, id, removed: 'request' });
+  } catch (error) {
+    console.error('training request delete failed', error);
+    res.status(500).json({ error: error.message || 'Failed to remove the training request.' });
   }
 });
 

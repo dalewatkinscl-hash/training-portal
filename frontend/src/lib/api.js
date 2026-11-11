@@ -153,6 +153,37 @@ export function fetchFolderSuggestions(name) {
   return api(`/api/admin/folder-suggestions?${query}`);
 }
 
+export function fetchTrainingRequests() {
+  return api('/api/training-requests');
+}
+
+export function fetchTrainingRequestStaff() {
+  return api('/api/training-requests/staff');
+}
+
+export function createTrainingRequest(body) {
+  return api('/api/training-requests', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+export function completeTrainingRequest(id) {
+  return api(`/api/training-requests/${encodeURIComponent(id)}/complete`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
+}
+
+export function deleteTrainingRequest(id, employeeUid = '') {
+  const query = employeeUid
+    ? `?employeeUid=${encodeURIComponent(employeeUid)}`
+    : '';
+  return api(`/api/training-requests/${encodeURIComponent(id)}${query}`, {
+    method: 'DELETE',
+  });
+}
+
 export function fetchCourseCompletionReport(params = {}) {
   const query = new URLSearchParams(
     Object.entries(params).filter(([, value]) => value != null && value !== ''),
