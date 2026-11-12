@@ -75,6 +75,15 @@
     @apply fixed z-50 rounded-lg border border-white/20 p-1.5;
     background: #16161c;
     box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+    max-height: min(70vh, 22rem);
+    overflow-y: auto;
+  }
+
+  .portal-menu-divider {
+    height: 1px;
+    margin: 0.2rem 0.45rem 0.35rem;
+    background: rgba(255, 255, 255, 0.1);
+    list-style: none;
   }
 
   .language-menu-option {

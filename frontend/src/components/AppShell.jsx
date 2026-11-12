@@ -1,10 +1,11 @@
 import { NavLink } from 'react-router-dom';
-import { Home, LogOut } from 'lucide-react';
+import { LogOut } from 'lucide-react';
 import AmbientBackground from './AmbientBackground';
 import DigitalClock from './DigitalClock';
 import LanguageMenu from './LanguageMenu';
+import PortalMenu from './PortalMenu';
 import { useI18n } from '../i18n/LanguageProvider';
-import { EMPLOYEE_HOME_URL, canAdmin, canTrain } from '../lib/training';
+import { canAdmin, canTrain } from '../lib/training';
 
 const linkClass = ({ isActive }) =>
   `px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
@@ -35,13 +36,7 @@ export default function AppShell({ portalUser, role, canRequestTraining = false,
           <DigitalClock />
           <div className="flex items-center gap-2 flex-wrap justify-end">
             <LanguageMenu />
-            <a
-              href={EMPLOYEE_HOME_URL}
-              className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-cl-border text-sm text-cl-fg hover:bg-white/[0.04]"
-            >
-              <Home className="w-4 h-4" />
-              {t('shell.home')}
-            </a>
+            <PortalMenu user={portalUser} />
             <button
               type="button"
               onClick={onLogout}
